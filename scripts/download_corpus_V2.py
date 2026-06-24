@@ -3,7 +3,7 @@ import argparse
 import pandas as pd
 from datasets import load_dataset
 
-def download_and_save_dataset(dataset_name, size=None):
+def download_and_save_dataset(dataset_name, size=None) -> str:
     os.makedirs('data/raw', exist_ok=True)
     
     print(f"Téléchargement du dataset: {dataset_name}...")
@@ -30,6 +30,7 @@ def download_and_save_dataset(dataset_name, size=None):
     # Sauvegarde en CSV    
     df.to_csv(output_path, index=False)
     print(f"Dataset sauvegardé avec succès dans: {output_path}")
+    return output_path
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Télécharge un dataset Hugging Face et le sauvegarde en CSV.")

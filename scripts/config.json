@@ -1,0 +1,17 @@
+{
+  "datasets": {
+    "name": "rojagtap/tech-qa",
+    "content_field": "document",
+    "required_fields": ["id","document","question","answer"]
+  },
+  "qdrant": {
+    "url": "http://localhost:6333",
+    "collection_simple": "collection_simple",
+    "collection_parent": "collection_parent"
+  },
+  "model": {
+    "name": "intfloat/multilingual-e5-small",
+    "passage_prefix": "passage: ",
+    "query_prefix": "query: "
+  }
+}
