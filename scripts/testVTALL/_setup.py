@@ -17,7 +17,7 @@ from qdrant_client.models import (
 )
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
-from _init import prepare_dataset_and_config, read_csv_dataset
+from scripts.testVTALL._init import prepare_dataset_and_config, read_csv_dataset
 
 _CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 config = prepare_dataset_and_config(_CONFIG_PATH)

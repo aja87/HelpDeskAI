@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any, Union
-from download_corpus_V2 import download_and_save_dataset
+from scripts.testVTALL.download_corpus_V2 import download_and_save_dataset
 
 def read_json_to_python_object(file_path: Union[str, Path]) -> Any:
 	"""Lit un fichier JSON et retourne l'objet Python correspondant."""
