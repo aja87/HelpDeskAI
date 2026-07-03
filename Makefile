@@ -3,4 +3,4 @@ PYTHON ?= .venv/bin/python
 .PHONY: ingest
 
 ingest:
-	$(PYTHON) -m helpdeskai.ingestion.pipeline
+	PYTHONPATH=. $(PYTHON) scripts/run_ingestion.py
