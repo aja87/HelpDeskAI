@@ -58,7 +58,7 @@ Agents, MCP et Observabilite seront stabilises.
 | Analyse corpus | Analyse exploratoire des corpus bruts et comparaison independante des strategies de chunking. Ces scripts produisent des artefacts de decision, pas des donnees indexees. | Python, Pandas, Matplotlib, BGE-M3 pour le chunking semantique. Expose par `scripts/analyze_corpus.py` et `scripts/compare_chunking.py`. |
 | Retrieval | Indexation des chunks TechQA dans Qdrant et pgvector. Recherche dense via embeddings BGE-M3, recherche sparse BM25 locale, recherche hybride par Reciprocal Rank Fusion, filtres metadata produit/version/date/tenant. | Python, SentenceTransformers, Qdrant, PostgreSQL/pgvector, BM25. Implemente dans `helpdeskai.retrieval` et expose par `scripts/index_retrieval.py`, `scripts/benchmark_retrieval.py` et `helpdeskai.retrieval.search.search`. |
 | RAG | Pipeline avance `rewrite -> retrieve -> rerank -> compress -> generate`, generation Claude avec citations, trois prompts versionnes et evaluation Ragas sur le golden TechQA eligible. | Python, Anthropic Claude, BGE reranker, Ragas. Implemente dans `helpdeskai.rag` et expose par `scripts/run_rag.py` et `scripts/evaluate_rag.py`. |
-| Agent | A definir | A definir |
+| Agent | Graphe LangGraph `classify_intent -> retrieve/generate/clarification/escalate`. Il classe l'intention metier par LLM (`nova_question`, `account_question`, `out_of_scope`, `chitchat`, `ambiguous`), la mappe vers une route interne, orchestre le RAG existant, pose une clarification si la confiance est faible, suspend les actions sensibles avant `escalate` et applique des budgets d'execution. | Python, LangGraph, Anthropic Claude, checkpoint SQLite. Implemente dans `helpdeskai.agents.support_agent` et expose par `scripts/run_agent.py`. |
 | Serveurs MCP | A definir | A definir |
 | Observabilite | A definir | A definir |
 
@@ -108,6 +108,11 @@ scripts/evaluate_rag.py
     -> reports/rag/ragas_results_<prompt>.csv
     -> reports/rag/ragas_comparison.md
     -> reports/rag/ragas_comparison.json
+
+scripts/run_agent.py
+    -> graph LangGraph support N1
+    -> checkpoint SQLite par thread_id
+    -> interruption avant action sensible
 ```
 
 Seuls les chunks issus de `data/processed/techqa/chunks.jsonl` sont destines a

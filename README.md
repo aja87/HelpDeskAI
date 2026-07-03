@@ -238,6 +238,37 @@ Les prompts versionnes sont :
 La CI execute uniquement les tests offline. L'evaluation Ragas reelle appelle
 Claude et doit etre lancee manuellement.
 
+## Agent et orchestration
+
+Le module `helpdeskai.agents` expose un agent LangGraph de support N1. Le graphe
+enchaine classification d'intention metier par LLM, controle de budget,
+clarification si la demande est ambigue, appel au RAG pour les questions
+documentees et escalade avec validation humaine pour les actions sensibles. Les
+intentions metier (`nova_question`, `account_question`, etc.) sont separees
+des routes internes (`answer_with_rag`, `sensitive_action`, `clarification`).
+
+Demo simple :
+
+```bash
+uv run python scripts/run_agent.py --question "How do I configure SAML login in NovaCloud?"
+```
+
+Demo human-in-the-loop avec checkpoint SQLite :
+
+```bash
+uv run python scripts/run_agent.py --thread-id ticket-1 --question "Create an escalation ticket for this login issue"
+uv run python scripts/run_agent.py --thread-id ticket-1 --approve
+```
+
+Exporter la visualisation Mermaid du graphe :
+
+```bash
+uv run python scripts/run_agent.py --export-mermaid docs/agent_graph.mmd
+```
+
+La comparaison LangGraph vs CrewAI est documentee dans
+`docs/agents_langgraph_vs_crewai.md`.
+
 ## Validation
 
 ```bash
