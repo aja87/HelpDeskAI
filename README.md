@@ -185,6 +185,59 @@ Le benchmark lit `tests/golden/questions.jsonl` et produit :
 Les indicateurs mesures sont `Recall@5`, `Recall@10`, `MRR`, `p50_ms` et
 `p95_ms`, pour les modes dense, sparse et hybride.
 
+## RAG avance et evaluation
+
+Le module RAG s'appuie sur le retrieval existant et ajoute :
+
+- query rewriting avec Claude ;
+- retrieval dense/sparse/hybride via `helpdeskai.retrieval` ;
+- re-ranking avec `BAAI/bge-reranker-v2-m3` ;
+- compression contextuelle des chunks retenus ;
+- generation Claude avec citations `[chunk_id]` ;
+- evaluation Ragas sur les questions TechQA eligibles.
+
+Configurer la cle Anthropic :
+
+```bash
+$env:ANTHROPIC_API_KEY = "..."
+```
+
+Executer une question :
+
+```bash
+uv run python scripts/run_rag.py --question "How do I configure SAML?"
+```
+
+Options utiles :
+
+```bash
+uv run python scripts/run_rag.py --prompt strict --mode hybrid
+uv run python scripts/run_rag.py --prompt pedagogical --final-k 5
+uv run python scripts/run_rag.py --questions-file questions.txt
+```
+
+Comparer les trois prompts avec Ragas :
+
+```bash
+uv run python scripts/evaluate_rag.py --limit 5
+```
+
+Sorties sous `reports/rag/` :
+
+- `rag_results_<prompt>.jsonl` ;
+- `ragas_results_<prompt>.csv` ;
+- `ragas_comparison.md` ;
+- `ragas_comparison.json`.
+
+Les prompts versionnes sont :
+
+- `strict` : citations obligatoires, refus si contexte insuffisant ;
+- `pedagogical` : explication support simple avec citations ;
+- `concise` : reponse operationnelle courte avec citations.
+
+La CI execute uniquement les tests offline. L'evaluation Ragas reelle appelle
+Claude et doit etre lancee manuellement.
+
 ## Validation
 
 ```bash

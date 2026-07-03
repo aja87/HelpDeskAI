@@ -57,7 +57,7 @@ Agents, MCP et Observabilite seront stabilises.
 | Ingestion | Pipeline modulaire `extract -> normalize -> document dedup -> enrich -> chunk recursive -> chunk dedup -> persist -> quality` applique uniquement aux documents TechQA. Il produit les documents canoniques et les chunks prets pour l'indexation. Les questions/reponses TechQA, Bitext et MSDialog restent hors pipeline. | Python, BeautifulSoup, tokenizer BGE-M3, Prefect, Evidently. Implemente dans `helpdeskai.ingestion` et expose par `scripts/prepare_corpus.py`. |
 | Analyse corpus | Analyse exploratoire des corpus bruts et comparaison independante des strategies de chunking. Ces scripts produisent des artefacts de decision, pas des donnees indexees. | Python, Pandas, Matplotlib, BGE-M3 pour le chunking semantique. Expose par `scripts/analyze_corpus.py` et `scripts/compare_chunking.py`. |
 | Retrieval | Indexation des chunks TechQA dans Qdrant et pgvector. Recherche dense via embeddings BGE-M3, recherche sparse BM25 locale, recherche hybride par Reciprocal Rank Fusion, filtres metadata produit/version/date/tenant. | Python, SentenceTransformers, Qdrant, PostgreSQL/pgvector, BM25. Implemente dans `helpdeskai.retrieval` et expose par `scripts/index_retrieval.py`, `scripts/benchmark_retrieval.py` et `helpdeskai.retrieval.search.search`. |
-| RAG | A definir | A definir |
+| RAG | Pipeline avance `rewrite -> retrieve -> rerank -> compress -> generate`, generation Claude avec citations, trois prompts versionnes et evaluation Ragas sur le golden TechQA eligible. | Python, Anthropic Claude, BGE reranker, Ragas. Implemente dans `helpdeskai.rag` et expose par `scripts/run_rag.py` et `scripts/evaluate_rag.py`. |
 | Agent | A definir | A definir |
 | Serveurs MCP | A definir | A definir |
 | Observabilite | A definir | A definir |
@@ -95,6 +95,19 @@ helpdeskai.retrieval.search.search
 scripts/benchmark_retrieval.py
     -> reports/retrieval/benchmark_results.csv
     -> reports/retrieval/benchmark_report.md
+
+scripts/run_rag.py
+    -> query rewriting Claude
+    -> retrieval dense/sparse/hybrid
+    -> BGE reranking
+    -> contextual compression
+    -> Claude answer with [chunk_id] citations
+
+scripts/evaluate_rag.py
+    -> reports/rag/rag_results_<prompt>.jsonl
+    -> reports/rag/ragas_results_<prompt>.csv
+    -> reports/rag/ragas_comparison.md
+    -> reports/rag/ragas_comparison.json
 ```
 
 Seuls les chunks issus de `data/processed/techqa/chunks.jsonl` sont destines a

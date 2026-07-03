@@ -78,6 +78,9 @@ def write_benchmark(path: Path, benchmark: dict) -> tuple[Path, Path]:
         "",
         "Deterministic comparison on 50 TechQA documents (seed 42).",
         "",
+        "Recursive chunking is the default publication strategy unless benchmark evidence "
+        "supports semantic chunking.",
+        "",
         "| Strategy | Chunks | Mean tokens | Median | Min | Max | Duplicates | "
         "Runtime (s) |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
@@ -89,7 +92,6 @@ def write_benchmark(path: Path, benchmark: dict) -> tuple[Path, Path]:
             f"{metrics['max_tokens']} | {metrics['duplicate_chunks']} | "
             f"{metrics['runtime_seconds']} |"
         )
-  
 
     markdown_path.write_text("\n".join(lines), encoding="utf-8")
     return json_path, markdown_path
