@@ -20,7 +20,7 @@ Build a defendable enterprise-grade N1 support assistant with:
 - Prefer deterministic pipelines and explicit configuration over implicit defaults.
 
 ## Technical Baseline
-- Python version: 3.11 to 3.12
+- Python version: 3.13
 - Package manager/runtime: project standard from pyproject
 - Data exchange formats:
   - Raw: jsonl or parquet in data/raw

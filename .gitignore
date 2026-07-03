@@ -1,4 +1,14 @@
+# ide
 .idea/
+.vscode/
+
+# local
 .venv/
+.env
+uv.lock
+
+# data
 data/
 reports/
+logs/
+*.pyc

@@ -10,6 +10,8 @@ import argparse
 import hashlib
 import json
 import logging
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,8 @@ from datasets import Dataset, DatasetDict, IterableDataset, load_dataset
 
 
 DATA_DIR = Path("data/raw")
+LOG_DIR = Path("logs")
+LOG_FILE = "app.log"
 CHECKSUM_FILE = "checksums.sha256.json"
 
 TECHQA_REPO = "rojagtap/tech-qa"
@@ -116,8 +120,10 @@ def _records_from_split(
     split: Dataset, mapper: Any, n_rows: int, seed: int
 ) -> list[dict[str, Any]]:
     """Sample and map rows until ``n_rows`` valid records are collected."""
+    logging.info("Sampling %d rows from split with seed=%d", n_rows, seed)
     rows: list[dict[str, Any]] = []
     sampled = split.shuffle(seed=seed)
+    logging.info("Shuffled split contains %d rows", len(sampled))
     for row in sampled:
         mapped = mapper(row)
         if mapped is None:
@@ -238,7 +244,15 @@ def _map_msdialog(row: dict[str, Any]) -> dict[str, Any] | None:
 def main() -> None:
     """Download datasets, build subsets, write JSONL artifacts, and checksum them."""
     args = parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+    log_dir: Path = Path(LOG_DIR)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = os.path.join(log_dir, LOG_FILE)
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s %(message)s", handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler(sys.stdout)
+    ])
 
     out_dir: Path = args.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -257,10 +271,12 @@ def main() -> None:
 
     logging.info("Loading TechQA from %s", TECHQA_REPO)
     techqa_raw = load_dataset(TECHQA_REPO)
+
     # TechQA may expose different split names depending on dataset revision.
     techqa_docs_split = _select_split(techqa_raw, ["corpus", "documents", "doc", "train"])
     techqa_qa_split = _select_split(techqa_raw, ["qa", "questions", "validation", "test", "train"])
 
+    logging.info("Sampling %d TechQA documents and %d QA pairs", args.techqa_docs, args.techqa_qa)
     techqa_docs = _records_from_split(
         techqa_docs_split,
         mapper=_map_techqa_doc,
@@ -277,6 +293,7 @@ def main() -> None:
     logging.info("Loading Bitext from %s", BITEXT_REPO)
     bitext_raw = load_dataset(BITEXT_REPO)
     bitext_split = _select_split(bitext_raw, ["train", "validation", "test"])
+    logging.info("Sampling %d Bitext pairs", args.bitext)
     bitext_pairs = _records_from_split(
         bitext_split,
         mapper=_map_bitext,
@@ -286,6 +303,7 @@ def main() -> None:
 
     logging.info("Loading MSDialog from JSON URL")
     msdialog_split = load_dataset("json", data_files=MSDIALOG_URL, split="train")
+    logging.info("Sampling %d MSDialog conversations", args.msdialog)
     msdialog_rows = _records_from_split(
         msdialog_split,
         mapper=_map_msdialog,
