@@ -5,10 +5,6 @@ Projet fil rouge du cursus AI Engineer Neosoft.
 L'objectif est de concevoir et industrialiser un assistant de support N1
 augmente par RAG et agents pour le contexte fictif NovaCloud.
 
-Le depot contient uniquement le squelette initial. Les pipelines d'ingestion,
-de retrieval, de RAG, les agents, les serveurs MCP, l'observabilite et les
-tests restent a implementer au fil des phases du projet.
-
 ## Prerequis
 
 - Python 3.11
@@ -21,19 +17,35 @@ tests restent a implementer au fil des phases du projet.
 uv sync --dev
 ```
 
-## Telechargement des corpus
+## Preparation des corpus
 
-Le script telecharge 5 000 documents TechQA depuis le corpus officiel
-`PrimeQA/TechQA`, les 621 questions/reponses de `rojagtap/tech-qa`, puis cree
-des echantillons deterministes de 2 000 tickets Bitext et 500 conversations
-MSDialog :
+La preparation des corpus est separee en scripts independants. Le
+telechargement n'est pas inclus dans le flow Prefect d'ingestion.
+
+### 1. Telecharger les donnees sources
+
+Le script telecharge les sources necessaires au projet :
+
+- TechQA documents, utilises pour l'indexation vectorielle ;
+- TechQA Q/A, reserve au golden dataset et aux evaluations RAG ;
+- Bitext, reserve aux tests d'intention et demonstrations ;
+- MSDialog, reserve aux tests agent multi-tours.
 
 ```bash
 uv run python scripts/download_corpus.py
 ```
 
-Les fichiers JSONL et leur manifeste de checksums SHA-256 sont produits sous
-`data/raw/`. La graine vaut `42` par defaut. Les principales options sont :
+Les fichiers JSONL et le manifeste sont produits sous `data/raw/` :
+
+```text
+data/raw/techqa/documents.jsonl
+data/raw/techqa/qa.jsonl
+data/raw/bitext/tickets.jsonl
+data/raw/msdialog/conversations.jsonl
+data/raw/manifest.json
+```
+
+La graine vaut `42` par defaut. Les principales options sont :
 
 ```bash
 uv run python scripts/download_corpus.py --seed 123 --data-dir data/raw
@@ -43,7 +55,7 @@ uv run python scripts/download_corpus.py --force
 
 Sans `--force`, le script refuse d'ecraser des sorties existantes.
 
-## Analyse locale des corpus
+### 2. Analyser les corpus telecharges
 
 Le script d'analyse charge les quatre fichiers JSONL avec Pandas et exporte
 les statistiques, doublons et distributions sous
@@ -53,17 +65,11 @@ les statistiques, doublons et distributions sous
 uv run python scripts/analyze_corpus.py
 ```
 
-## Pipeline de preparation du corpus
+### 3. Preparer le corpus indexable TechQA
 
-Le telechargement reste une operation independante :
-
-```bash
-uv run python scripts/download_corpus.py
-```
-
-Le flow Prefect part ensuite de `data/raw`, normalise et enrichit TechQA,
-applique le chunking recursive retenu, deduplique les chunks, puis genere
-automatiquement un rapport qualite Evidently sur le corpus final :
+Le flow Prefect part de `data/raw/techqa/documents.jsonl`, normalise et enrichit
+uniquement les documents TechQA, applique le chunking recursive retenu,
+deduplique les chunks, puis genere automatiquement un rapport qualite Evidently :
 
 ```bash
 uv run python scripts/prepare_corpus.py --force
@@ -75,7 +81,7 @@ Il produit sous `data/processed/techqa/` :
 - `chunks.jsonl` : chunks recursive dedupliques, prets a indexer ;
 - `manifest.json` : statistiques et configuration du chunking.
 
-Il produit egalement :
+Il produit egalement sous `docs/corpus_preparation/` :
 
 - `docs/corpus_preparation/corpus_quality_report.html` ;
 - `docs/corpus_preparation/corpus_quality_summary.json`.
@@ -90,15 +96,106 @@ extract -> normalize -> document dedup -> enrich -> chunk -> chunk dedup
 -> persist -> quality
 ```
 
+Les Q/A TechQA, Bitext et MSDialog ne sont pas transformes par ce pipeline.
+Ils restent des donnees d'evaluation ou de demonstration pour les modules
+suivants.
 
-## Operations independantes
+### 4. Comparer les strategies de chunking
 
-La comparaison des chunkings utilise localement `BAAI/bge-m3` et n'est pas
-executee par le pipeline :
+La comparaison des chunkings est un script independant. Elle utilise les
+documents prepares, compare `fixed`, `recursive` et `semantic`, et charge
+localement `BAAI/bge-m3` pour le chunking semantique :
 
 ```bash
 uv run python scripts/compare_chunking.py --force
 ```
 
+Sorties :
+
+- `docs/corpus_preparation/chunking_benchmark.json` ;
+- `docs/corpus_preparation/chunking_benchmark.md` ;
+- `docs/corpus_preparation/chunking_comparison.png`.
+
+Les indicateurs compares sont structurels : nombre de chunks, distribution des
+tokens, chunks trop petits ou trop grands, doublons exacts et temps d'execution.
+La qualite retrieval/RAG sera mesuree dans les modules suivants, quand l'index et
+les jeux d'evaluation seront disponibles.
+
+## Retrieval
+
+Le module retrieval indexe les chunks TechQA prepares dans Qdrant et pgvector,
+puis expose une recherche dense, sparse ou hybride.
+
+Demarrer les services necessaires :
+
+```bash
+docker compose --profile retrieval up -d qdrant pgvector
+```
+
+Indexer le corpus prepare :
+
+```bash
+uv run python scripts/index_retrieval.py
+```
+
+Parametres principaux :
+
+```bash
+uv run python scripts/index_retrieval.py --collection helpdeskai_techqa_chunks
+uv run python scripts/index_retrieval.py --no-pgvector
+uv run python scripts/index_retrieval.py --no-qdrant
+uv run python scripts/index_retrieval.py --append
+```
+
+Le comportement par defaut :
+
+- lit `data/processed/techqa/chunks.jsonl` ;
+- encode les chunks avec `BAAI/bge-m3` ;
+- recrée la collection Qdrant `helpdeskai_techqa_chunks` ;
+- alimente aussi la table pgvector `retrieval_chunks` ;
+- conserve les metadonnees utiles au filtrage : produit, version, date, categorie
+  et tenant.
+
+La recherche publique est exposee par `helpdeskai.retrieval.search.search(...)`.
+Elle supporte trois modes :
+
+- `dense` : recherche vectorielle Qdrant ;
+- `sparse` : BM25 local en memoire ;
+- `hybrid` : fusion dense + sparse par Reciprocal Rank Fusion.
+
+Exemple Python :
+
+```python
+from helpdeskai.retrieval.search import search
+
+results = search("How do I configure SAML?", top_k=5, mode="hybrid")
+```
+
+Benchmark retrieval :
+
+```bash
+uv run python scripts/benchmark_retrieval.py
+```
+
+Le benchmark lit `tests/golden/questions.jsonl` et produit :
+
+- `reports/retrieval/benchmark_results.csv` ;
+- `reports/retrieval/benchmark_report.md`.
+
+Les indicateurs mesures sont `Recall@5`, `Recall@10`, `MRR`, `p50_ms` et
+`p95_ms`, pour les modes dense, sparse et hybride.
+
+## Validation
+
+```bash
+uv run ruff check .
+uv run pytest
+```
+
+## Donnees et artefacts generes
+
+Les donnees brutes, donnees traitees, caches de modeles et rapports generes ne
+doivent pas etre versionnes, sauf artefacts explicitement demandes dans
+`docs/corpus_preparation/` ou `tests/golden/`.
 
 
