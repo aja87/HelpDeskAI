@@ -68,6 +68,12 @@ L'ingestion suit maintenant la meme regle que corpus:
 
 Regle explicite: aucun parsing CLI ingestion dans les sous-modules helpdeskai/ingestion.
 
+## Focus: architecture indexation
+
+L'indexation suit la même logique:
+
+- scripts/run_indexing.py: script executable avec toute la CLI ingestion.
+
 ## Flux de donnees
 
 1. scripts/download_corpus.py lance le workflow corpus.

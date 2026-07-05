@@ -15,7 +15,8 @@ dependencies = [
     "pandas>=2.2",
     "prefect>=3.0",
     "pydantic>=2.10",
-    "qdrant-client>=1.12",
+    "qdrant-client>=1.12, <=1.13",
+    "sentence-transformers>=3.0",
 ]
 
 [dependency-groups]
