@@ -29,13 +29,14 @@ Consequence: un script dans scripts ne doit contenir que l'entree CLI, puis dele
 | scripts/ | Points d'entree d'execution locale et CI | CLI utilisateur |
 | helpdeskai/corpus/ | Telechargement et sous-echantillonnage des corpus bruts | data/raw/*.jsonl + checksums |
 | helpdeskai/ingestion/ | Normalisation, chunking, controle qualite, golden set | data/processed + reports/ingestion + tests/golden |
-| helpdeskai/retrieval/ | Construction et interrogation des index | Index/vector store + metriques retrieval |
+| helpdeskai/indexing/ | Construction des index | Index/vector store |
+| helpdeskai/retrieval/ | Interrogation des index | Search vector store + metriques retrieval |
 | helpdeskai/rag/ | Rewriting, rerank, compression, generation | Reponses contextualisees |
 | helpdeskai/agents/ | Orchestration des etats et chemins de decision | Tool calls + reponses agent |
 | helpdeskai/mcp_servers/ | Exposition des outils metier (CRM, KB, etc.) | Contrats MCP valides |
 | helpdeskai/observability/ | Traces, metriques, evaluation offline/online | Runs MLflow/Langfuse + rapports |
 
-## Focus: architecture corpus
+### Module: architecture corpus
 
 Le telechargement de corpus est maintenant organise ainsi:
 
@@ -52,11 +53,11 @@ Ce decoupage permet:
 - des tests unitaires plus ciblables par couche
 - un script CLI stable meme si la logique interne evolue
 
-## Focus: architecture ingestion
+### Module: architecture ingestion
 
 L'ingestion suit maintenant la meme regle que corpus:
 
-- scripts/run_ingestion.py: script executable avec toute la CLI ingestion.
+- scripts/run_ingestion.py: script executable avec toute la CLI pour déclencher l'ingestion.
 - helpdeskai/ingestion/workflow.py: orchestration du pipeline et taches.
 - helpdeskai/ingestion/normalize.py: normalisation texte et schemas cibles.
 - helpdeskai/ingestion/chunking.py: strategies de chunking + benchmark.
@@ -64,15 +65,41 @@ L'ingestion suit maintenant la meme regle que corpus:
 - helpdeskai/ingestion/golden.py: construction du golden dataset.
 - helpdeskai/ingestion/io_utils.py: read/write JSONL et JSON.
 - helpdeskai/ingestion/config.py: constantes et configuration typed.
-- helpdeskai/ingestion/pipeline.py: facade de compatibilite pour les imports historiques.
 
 Regle explicite: aucun parsing CLI ingestion dans les sous-modules helpdeskai/ingestion.
 
-## Focus: architecture indexation
+### Module: architecture indexation
 
 L'indexation suit la même logique:
 
-- scripts/run_indexing.py: script executable avec toute la CLI ingestion.
+- scripts/run_indexing.py: script executable avec toute la CLI pour déclencher l'indexation.
+- helpdeskai/indexing/workflow.py: orchestration du pipeline et taches.
+- helpdeskai/indexing/config.py: constantes et configuration typed.
+- helpdeskai/indexing/embeddings: implementation du client d'embeddings (BGE)
+- helpdeskai/indexing/io_utils.py: read/write JSONL et JSON et operations de batch.
+- helpdeskai/indexing/models: modèle de document (chunks)
+- helpdeskai/indexing/qdrant_store: initialisation du client Qdrant et opérations CRUD sur les collections
+
+### Module: architecture retrieval
+
+Le retrieval suit la même logique:
+
+- scripts/run_retrieval.py: script pour tester la fonctionnalité de recherche.
+- scripts/benchmark_retrieval.py: script de génération des benchmarks de retrieval.
+- helpdeskai/retrieval/workflow.py: orchestration du pipeline et taches.
+- helpdeskai/retrieval/config.py : constantes et configuration typed.
+- helpdeskai/retrieval/io_utils.py: read/write JSONL et JSON.
+
+### Module: architecture RAG
+
+Le RAG suit la même logique:
+
+- scripts/search_rag.py: script executable avec toute la CLI pour une recherche RAG.
+- scripts/evaluate_rag.py: script de génération du rapport d'évaluation du RAG.
+- helpdeskai/rag/workflow.py: orchestration du pipeline et taches.
+- helpdeskai/indexing/config.py: constantes et configuration typed.
+- helpdeskai/retrieval/prompts.py: définition des variantes de prompts.
+
 
 ## Flux de donnees
 

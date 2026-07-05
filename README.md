@@ -11,7 +11,7 @@ tests restent a implementer au fil des phases du projet.
 
 ## Prerequis
 
-- Python 3.11
+- Python 3.13
 - [uv](https://docs.astral.sh/uv/)
 - Docker avec Docker Compose
 

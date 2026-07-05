@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import argparse
 import logging
-import os
-import sys
+
+from argparse import ArgumentParser
 from pathlib import Path
 
 from helpdeskai.corpus.config import DATA_DIR, LOG_DIR, LOG_FILE, DownloadConfig
@@ -14,7 +13,7 @@ from helpdeskai.common.logging import init_logging
 def parse_args() -> DownloadConfig:
     """Parse CLI options controlling output paths and subset sizes."""
 
-    parser = argparse.ArgumentParser(description="Download and subset HelpDeskAI corpora")
+    parser = ArgumentParser(description="Download and subset HelpDeskAI corpora")
     parser.add_argument("--output-dir", type=Path, default=DATA_DIR)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--overwrite", action="store_true")

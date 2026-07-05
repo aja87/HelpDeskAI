@@ -25,11 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embedding-model", type=str, default="BAAI/bge-m3")
     parser.add_argument("--mode", type=str, default="hybrid", choices=sorted(VALID_RETRIEVAL_MODES))
     parser.add_argument("--top-k", type=int, default=5)
-    parser.add_argument(
-        "--query",
-        type=str,
-        default="How to fix SSL handshake errors after an upgrade?",
-    )
+    parser.add_argument("--query",type=str,default=None)
     parser.add_argument("--source", type=str, default=None)
     parser.add_argument("--product", type=str, default=None)
     parser.add_argument("--version", type=str, default=None)

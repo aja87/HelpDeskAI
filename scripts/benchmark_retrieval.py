@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import argparse
+from argparse import Namespace, ArgumentParser
 import logging
 import os
 from pathlib import Path
@@ -16,10 +16,10 @@ from helpdeskai.retrieval.config import (
 from helpdeskai.retrieval.workflow import run_benchmark_core
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args() -> Namespace:
     """Parse CLI args for retrieval benchmark."""
 
-    parser = argparse.ArgumentParser(description="Run retrieval benchmark and save report")
+    parser = ArgumentParser(description="Run retrieval benchmark and save report")
     parser.add_argument("--chunks-path", type=Path, default=DEFAULT_CHUNKS_PATH)
     parser.add_argument("--golden-path", type=Path, default=GOLDEN_PATH)
     parser.add_argument("--output-path", type=Path, default=DEFAULT_BENCHMARK_PATH)
@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_config(args: argparse.Namespace) -> RetrievalConfig:
+def build_config(args: Namespace) -> RetrievalConfig:
     return RetrievalConfig(
         chunks_path=args.chunks_path,
         golden_path=args.golden_path,

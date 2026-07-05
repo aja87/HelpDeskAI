@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import logging
+
 from pathlib import Path
 from helpdeskai.common.logging import init_logging
 from helpdeskai.indexing.config import (
