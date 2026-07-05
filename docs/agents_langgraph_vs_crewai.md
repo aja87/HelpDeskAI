@@ -5,9 +5,9 @@
 HelpDeskAI utilise LangGraph pour l'agent support N1. Le graphe explicite les
 noeuds demandes : `classify_intent`, `retrieve`, `generate`, `clarification` et
 `escalate`. Le noeud `classify_intent` appelle un LLM, puis valide une des cinq
-intentions metier exactes (`nova_question`, `account_question`, `out_of_scope`,
+intentions metier exactes (`technical_question`, `crm_question`, `out_of_scope`,
 `chitchat`, `ambiguous`). Cette intention
-est ensuite mappee vers une route interne (`answer_with_rag`, `account_support`,
+est ensuite mappee vers une route interne (`answer_with_rag`, `crm_support`,
 `out_of_scope`, `chitchat`, `clarification`, `sensitive_action`) pour le
 routage conditionnel.
 
@@ -22,5 +22,4 @@ Les demandes sensibles, par exemple une creation de ticket d'escalade support,
 preparent une action `create_ticket` puis suspendent le graphe avant `escalate`.
 Un humain peut approuver ou rejeter en modifiant l'etat checkpointe, puis
 l'execution reprend sur le meme `thread_id`.
-
 

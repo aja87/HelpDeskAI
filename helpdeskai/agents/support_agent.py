@@ -45,6 +45,26 @@ class IntentClassifier(Protocol):
         """Classify one user question for graph routing."""
 
 
+class CrmClient(Protocol):
+    """Minimal CRM MCP adapter contract consumed by the graph."""
+
+    def get_customer(self, customer_id: str) -> dict[str, Any]:
+        """Return a CRM customer."""
+
+    def get_subscription_status(self, customer_id: str) -> dict[str, Any]:
+        """Return subscription status for a CRM customer."""
+
+    def create_ticket(
+        self,
+        *,
+        customer_id: str,
+        subject: str,
+        body: str,
+        priority: str = "medium",
+    ) -> dict[str, Any]:
+        """Create a CRM support ticket."""
+
+
 @dataclass(frozen=True)
 class IntentDecision:
     """Classification result used for graph routing."""
@@ -79,6 +99,7 @@ class SupportAgentState(TypedDict, total=False):
     pending_action: dict[str, Any] | None
     approval: str | None
     action_result: str | None
+    account_context: dict[str, Any] | None
     iterations: int
     tokens_used: int
     budget_exceeded: bool
@@ -104,7 +125,7 @@ def _append_path(state: SupportAgentState, node: str, *token_values: Any) -> dic
 
 
 ALLOWED_INTENTS = frozenset(
-    {"nova_question", "account_question", "out_of_scope", "chitchat", "ambiguous"}
+    {"technical_question", "crm_question", "out_of_scope", "chitchat", "ambiguous"}
 )
 
 
@@ -112,11 +133,24 @@ class IntentClassificationError(ValueError):
     """Raised when the LLM does not return the expected intent schema."""
 
 
+def _load_intent_json(raw: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+        if not match:
+            raise
+        payload = json.loads(match.group(0))
+    if not isinstance(payload, dict):
+        raise IntentClassificationError("intent classifier JSON must be an object")
+    return payload
+
+
 def _route_for_intent(intent: str) -> str:
-    if intent == "nova_question":
+    if intent == "technical_question":
         return "answer_with_rag"
-    if intent == "account_question":
-        return "account_support"
+    if intent == "crm_question":
+        return "crm_support"
     if intent == "out_of_scope":
         return "out_of_scope"
     if intent == "chitchat":
@@ -152,13 +186,21 @@ def _decision_from_intent(
     return IntentDecision(intent, route, confidence if confidence is not None else 0.78)
 
 
+def _extract_customer_id(question: str) -> str | None:
+    match = re.search(r"\bcust_[a-z0-9_]{2,40}\b", question, flags=re.IGNORECASE)
+    return match.group(0).lower() if match else None
+
+
 class LlmIntentClassifier:
     """LLM classifier following the routing pattern used in the M06 exercises."""
 
     prompt = """Classe la question utilisateur en EXACTEMENT UNE intention metier :
-- "nova_question" : question sur NovaCloud, configuration, erreurs, API, SAML, usage produit
-- "account_question" : question sur un compte, abonnement, droits, acces ou statut client
-- "out_of_scope" : hors support NovaCloud
+- "technical_question" : question technique/documentaire qui peut etre traitee par la base de
+  connaissance RAG, y compris logiciels d'entreprise, administration systeme, configuration,
+  erreurs, API, WebSphere Portal Server, wpcollector, SAML, utilisateurs, roles ou acces
+- "crm_question" : question specifique a un client/compte reel necessitant le CRM, par exemple
+  statut de cust_xxx, abonnement d'un client, tickets recents ou compte suspendu
+- "out_of_scope" : hors support informatique/technique et hors base de connaissance
 - "chitchat" : salutation, politesse ou conversation courte
 - "ambiguous" : demande trop vague pour repondre
 
@@ -167,7 +209,7 @@ comme creer/escalader un ticket, supprimer un compte, desactiver un utilisateur
 ou modifier un abonnement. Sinon "sensitive": false.
 
 Reponds uniquement avec JSON valide, sans markdown :
-{{"intent":"nova_question|account_question|out_of_scope|chitchat|ambiguous","confidence":0.0,"sensitive":false}}
+{{"intent":"technical_question|crm_question|out_of_scope|chitchat|ambiguous","confidence":0.0,"sensitive":false}}
 
 Question : {question}"""
 
@@ -197,7 +239,7 @@ Question : {question}"""
             temperature=self.temperature,
         )
         try:
-            payload = json.loads(raw)
+            payload = _load_intent_json(raw)
         except json.JSONDecodeError as exc:
             raise IntentClassificationError("intent classifier returned invalid JSON") from exc
 
@@ -217,7 +259,17 @@ Question : {question}"""
         return _decision_from_intent(intent, confidence, sensitive=sensitive)
 
 
-def _make_action(question: str) -> dict[str, Any]:
+def _customer_id_from_context(state: SupportAgentState) -> str | None:
+    context = state.get("account_context") or {}
+    customer = context.get("customer") if isinstance(context, dict) else None
+    if isinstance(customer, dict):
+        customer_id = customer.get("customer_id")
+        return str(customer_id) if customer_id else None
+    customer_id = context.get("customer_id") if isinstance(context, dict) else None
+    return str(customer_id) if customer_id else None
+
+
+def _make_action(question: str, *, customer_id: str | None = None) -> dict[str, Any]:
     subject = "Validation action support sensible"
     if re.search(r"\bescalad", question, flags=re.IGNORECASE):
         subject = "Escalade support"
@@ -226,7 +278,7 @@ def _make_action(question: str) -> dict[str, Any]:
     return {
         "tool": "create_ticket",
         "args": {
-            "customer_id": "unknown",
+            "customer_id": _extract_customer_id(question) or customer_id or "",
             "subject": subject,
             "body": question,
             "priority": "high",
@@ -235,9 +287,63 @@ def _make_action(question: str) -> dict[str, Any]:
     }
 
 
-def _execute_mock_ticket(action: dict[str, Any]) -> str:
-    args = action["args"]
-    return f"Ticket TCK-0001 cree: {args['subject']} ({args['priority']})."
+def _format_mcp_error(prefix: str, exc: Exception) -> str:
+    return f"{prefix} Le service CRM MCP est indisponible: {exc}"
+
+
+def _crm_error_answer(error: str, customer_id: str) -> str:
+    if error == "customer_not_found":
+        return (
+            f"Je n'ai pas trouve de compte CRM exploitable pour {customer_id}. "
+            "Verifiez l'identifiant client."
+        )
+    if error == "rate_limited":
+        return "Le CRM MCP limite temporairement les appels. Reessayez dans quelques instants."
+    if error == "unauthorized":
+        return "Je ne peux pas consulter le CRM MCP: le jeton d'authentification est invalide."
+    return f"Le CRM MCP a retourne une erreur: {error}."
+
+
+def _account_answer(
+    question: str,
+    crm_client: CrmClient | None,
+) -> tuple[str, dict[str, Any] | None]:
+    customer_id = _extract_customer_id(question)
+    if customer_id is None:
+        return (
+            "Votre demande concerne un compte NovaCloud. Pouvez-vous fournir l'identifiant "
+            "client au format cust_xxx pour que je consulte le CRM ?",
+            None,
+        )
+    if crm_client is None:
+        return (
+            "Je ne peux pas consulter le CRM MCP pour le moment. Conservez l'identifiant "
+            f"{customer_id} dans la demande et reessayez quand l'integration MCP est active.",
+            {"customer_id": customer_id, "error": "mcp_not_configured"},
+        )
+    try:
+        customer = crm_client.get_customer(customer_id)
+        if customer.get("error"):
+            return _crm_error_answer(customer["error"], customer_id), {"customer": customer}
+        subscription = crm_client.get_subscription_status(customer_id)
+    except Exception as exc:
+        return (
+            _format_mcp_error(
+                f"Je n'ai pas pu recuperer le statut du compte {customer_id}.",
+                exc,
+            ),
+            {"customer_id": customer_id, "error": "mcp_unavailable"},
+        )
+    context = {"customer": customer, "subscription": subscription}
+    if subscription.get("error"):
+        return _crm_error_answer(subscription["error"], customer_id), context
+    answer = (
+        f"Compte {customer.get('name', customer_id)} ({customer_id}) : abonnement "
+        f"{subscription.get('status')} sur l'offre {subscription.get('plan')} "
+        f"NovaCloud, {subscription.get('seats_used')}/{subscription.get('seats_total')} "
+        f"sieges utilises. Renouvellement prevu le {subscription.get('renewal_date')}."
+    )
+    return answer, context
 
 
 def build_support_graph(
@@ -248,11 +354,12 @@ def build_support_graph(
     checkpointer: Any | None = None,
     interrupt_sensitive_actions: bool = True,
     ticket_executor: Any | None = None,
+    crm_client: CrmClient | None = None,
 ) -> RunnableGraph:
     """Build the Phase 5 LangGraph agent."""
     rag = rag_pipeline or AdvancedRagPipeline()
     classifier = intent_classifier or LlmIntentClassifier()
-    execute_ticket = ticket_executor or _execute_mock_ticket
+    execute_ticket = ticket_executor
 
     def classify_intent(state: SupportAgentState) -> dict[str, Any]:
         question = state.get("question", "")
@@ -276,7 +383,10 @@ def build_support_graph(
                 "Je transmets la demande a un agent humain avec le contexte disponible."
             )
         if decision.sensitive:
-            result["pending_action"] = _make_action(question)
+            result["pending_action"] = _make_action(
+                question,
+                customer_id=_customer_id_from_context(state),
+            )
         return result
 
     def retrieve(state: SupportAgentState) -> dict[str, Any]:
@@ -290,27 +400,30 @@ def build_support_graph(
 
     def generate(state: SupportAgentState) -> dict[str, Any]:
         route = state.get("route")
+        account_context = None
         if state.get("budget_exceeded"):
             answer = state.get("answer", "")
-        elif route == "account_support":
-            answer = (
-                "Votre demande concerne un compte NovaCloud. A ce stade, je peux la qualifier "
-                "et conserver le contexte ; la consultation CRM sera branchee dans la phase MCP."
-            )
+        elif route == "crm_support":
+            answer, account_context = _account_answer(state.get("question", ""), crm_client)
         elif route == "chitchat":
-            answer = "Bonjour, je peux vous aider sur les questions support NovaCloud."
+            answer = "Bonjour, je peux vous aider sur les questions support technique."
         elif route == "out_of_scope":
             answer = (
                 "Cette demande sort du perimetre HelpDeskAI. Je peux traiter les questions "
-                "support liees a NovaCloud."
+                "support techniques documentees dans la base de connaissance."
             )
         else:
             answer = state.get("_rag_answer") or "Je n'ai pas trouve de reponse sourcee."
-        return _append_path(state, "generate", answer) | {"answer": answer}
+        update = _append_path(state, "generate", answer) | {"answer": answer}
+        if route != "answer_with_rag":
+            update["sources"] = []
+        if route == "crm_support":
+            update["account_context"] = account_context
+        return update
 
     def clarification(state: SupportAgentState) -> dict[str, Any]:
         answer = (
-            "Pouvez-vous preciser le produit NovaCloud concerne, le message d'erreur exact "
+            "Pouvez-vous preciser le produit concerne, le message d'erreur exact "
             "et l'action deja tentee ?"
         )
         return _append_path(state, "clarification", answer) | {
@@ -319,7 +432,10 @@ def build_support_graph(
         }
 
     def escalate(state: SupportAgentState) -> dict[str, Any]:
-        action = state.get("pending_action") or _make_action(state.get("question", ""))
+        action = state.get("pending_action") or _make_action(
+            state.get("question", ""),
+            customer_id=_customer_id_from_context(state),
+        )
         approval = state.get("approval")
         if approval != "approved":
             answer = "Action sensible annulee ou en attente d'approbation."
@@ -328,7 +444,62 @@ def build_support_graph(
                 "answer": answer,
                 "action_result": answer,
             }
-        result = execute_ticket(action)
+        if crm_client is not None and action.get("tool") == "create_ticket":
+            args = action["args"]
+            if not args.get("customer_id"):
+                answer = (
+                    "Action sensible approuvee, mais aucun identifiant client cust_xxx n'est "
+                    "present. Je conserve l'action en attente."
+                )
+                return _append_path(state, "escalate", action, answer) | {
+                    "pending_action": action,
+                    "action_result": "missing_customer_id",
+                    "answer": answer,
+                }
+            try:
+                payload = crm_client.create_ticket(
+                    customer_id=args["customer_id"],
+                    subject=args["subject"],
+                    body=args["body"],
+                    priority=args["priority"],
+                )
+            except Exception as exc:
+                answer = _format_mcp_error(
+                    "Action approuvee, mais le ticket CRM n'a pas ete cree.",
+                    exc,
+                )
+                return _append_path(state, "escalate", action, answer) | {
+                    "pending_action": action,
+                    "action_result": "mcp_unavailable",
+                    "answer": answer,
+                }
+            if payload.get("error"):
+                answer = (
+                    "Action approuvee, mais le CRM a refuse la creation du ticket: "
+                    f"{payload.get('error')}."
+                )
+                return _append_path(state, "escalate", action, answer) | {
+                    "pending_action": action,
+                    "action_result": payload,
+                    "answer": answer,
+                }
+            ticket = payload.get("ticket", payload)
+            result = (
+                f"Ticket {ticket.get('ticket_id')} cree dans le CRM: "
+                f"{ticket.get('subject')} ({ticket.get('priority')})."
+            )
+        elif execute_ticket is not None:
+            result = execute_ticket(action)
+        else:
+            answer = (
+                "Action sensible approuvee, mais aucun client CRM MCP n'est configure. "
+                "Je conserve l'action en attente."
+            )
+            return _append_path(state, "escalate", action, answer) | {
+                "pending_action": action,
+                "action_result": "mcp_not_configured",
+                "answer": answer,
+            }
         return _append_path(state, "escalate", action) | {
             "pending_action": action,
             "action_result": result,
@@ -399,12 +570,14 @@ class SupportAgent:
         intent_classifier: IntentClassifier | None = None,
         config: AgentConfig = AgentConfig(),
         checkpointer: Any | None = None,
+        crm_client: CrmClient | None = None,
     ) -> SupportAgent:
         graph = build_support_graph(
             rag_pipeline=rag_pipeline,
             intent_classifier=intent_classifier,
             config=config,
             checkpointer=checkpointer,
+            crm_client=crm_client,
         )
         return cls(graph)
 

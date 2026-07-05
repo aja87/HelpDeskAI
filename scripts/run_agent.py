@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from helpdeskai.agents import AgentConfig, SupportAgent, open_sqlite_checkpointer  # noqa: E402
 from helpdeskai.agents.support_agent import IntentClassificationError  # noqa: E402
+from helpdeskai.mcp_servers.client import McpServerScripts, StdioMcpClient  # noqa: E402
 from helpdeskai.rag.llm import MissingAnthropicKeyError  # noqa: E402
 
 console = Console()
@@ -33,6 +34,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--reject", action="store_true", help="Reject a pending sensitive action.")
     parser.add_argument("--export-mermaid", type=Path, help="Write the graph Mermaid diagram.")
+    parser.add_argument("--with-mcp", action="store_true", help="Enable stdio CRM MCP integration.")
+    parser.add_argument(
+        "--mcp-token",
+        default="helpdeskai-dev-token",
+        help="Shared MCP auth token for the POC servers.",
+    )
+    parser.add_argument(
+        "--crm-server",
+        type=Path,
+        default=PROJECT_ROOT / "helpdeskai" / "mcp_servers" / "crm.py",
+        help="Path to the CRM MCP stdio server script.",
+    )
+    parser.add_argument(
+        "--knowledge-server",
+        type=Path,
+        default=PROJECT_ROOT / "helpdeskai" / "mcp_servers" / "knowledge.py",
+        help="Path to the knowledge MCP stdio server script.",
+    )
     return parser.parse_args(argv)
 
 
@@ -55,7 +74,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         load_dotenv(PROJECT_ROOT / ".env")
         with open_sqlite_checkpointer(args.checkpoint_db) as checkpointer:
-            agent = SupportAgent.create(config=AgentConfig(), checkpointer=checkpointer)
+            crm_client = None
+            if args.with_mcp:
+                crm_client = StdioMcpClient(
+                    scripts=McpServerScripts(
+                        crm=args.crm_server,
+                        knowledge=args.knowledge_server,
+                    ),
+                    token=args.mcp_token,
+                )
+            agent = SupportAgent.create(
+                config=AgentConfig(),
+                checkpointer=checkpointer,
+                crm_client=crm_client,
+            )
             if args.export_mermaid:
                 args.export_mermaid.parent.mkdir(parents=True, exist_ok=True)
                 args.export_mermaid.write_text(agent.draw_mermaid(), encoding="utf-8")

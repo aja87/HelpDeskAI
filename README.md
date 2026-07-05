@@ -244,7 +244,7 @@ Le module `helpdeskai.agents` expose un agent LangGraph de support N1. Le graphe
 enchaine classification d'intention metier par LLM, controle de budget,
 clarification si la demande est ambigue, appel au RAG pour les questions
 documentees et escalade avec validation humaine pour les actions sensibles. Les
-intentions metier (`nova_question`, `account_question`, etc.) sont separees
+intentions metier (`technical_question`, `crm_question`, etc.) sont separees
 des routes internes (`answer_with_rag`, `sensitive_action`, `clarification`).
 
 Demo simple :
