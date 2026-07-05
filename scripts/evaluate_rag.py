@@ -14,6 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from helpdeskai.observability.mlflow_tracking import log_rag_evaluation_run  # noqa: E402
 from helpdeskai.rag.evaluation import (  # noqa: E402
     build_ragas_rows,
     build_results_for_prompt,
@@ -41,6 +42,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--generator-model", default="claude-haiku-4-5-20251001")
     parser.add_argument("--judge-model", default="claude-sonnet-5")
     parser.add_argument("--embedding-model", default="intfloat/multilingual-e5-small")
+    parser.add_argument("--mlflow-tracking-uri", default=None)
+    parser.add_argument("--mlflow-experiment", default="helpdeskai-rag-eval")
     return parser.parse_args(argv)
 
 
@@ -66,6 +69,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
 
         summaries = {}
+        all_results = []
+        artifact_paths = []
         for prompt in prompt_names(args.prompt):
             console.print(f"\n[cyan]Running RAG for prompt `{prompt}` on {len(cases)} cases[/cyan]")
             config = RagConfig(
@@ -75,7 +80,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 retrieval_mode=args.mode,
             )
             results = build_results_for_prompt(cases, config=config)
-            write_rag_results(args.report_dir / f"rag_results_{prompt}.jsonl", results)
+            all_results.extend(results)
+            rag_results_path = write_rag_results(
+                args.report_dir / f"rag_results_{prompt}.jsonl",
+                results,
+            )
+            artifact_paths.append(rag_results_path)
             rows = build_ragas_rows(cases, results)
 
             console.print(f"[cyan]Evaluating prompt `{prompt}` with Ragas[/cyan]")
@@ -84,11 +94,42 @@ def main(argv: Sequence[str] | None = None) -> int:
                 judge_model=args.judge_model,
                 embedding_model=args.embedding_model,
             )
-            dataframe.to_csv(args.report_dir / f"ragas_results_{prompt}.csv", index=False)
+            ragas_path = args.report_dir / f"ragas_results_{prompt}.csv"
+            dataframe.to_csv(ragas_path, index=False)
+            artifact_paths.append(ragas_path)
             summaries[prompt] = summarize_scores(dataframe)
 
-        write_comparison(args.report_dir, summaries)
+        comparison_paths = write_comparison(args.report_dir, summaries)
+        artifact_paths.extend(comparison_paths)
         _print_summary(summaries)
+        tracking_uri = args.mlflow_tracking_uri or __import__("os").environ.get(
+            "MLFLOW_TRACKING_URI"
+        )
+        if tracking_uri:
+            scores = {
+                f"{prompt}.{metric}": value
+                for prompt, prompt_scores in summaries.items()
+                for metric, value in prompt_scores.items()
+            }
+            run_id = log_rag_evaluation_run(
+                tracking_uri=tracking_uri,
+                experiment=args.mlflow_experiment,
+                run_name=f"ragas_{args.prompt}_{args.mode}",
+                params={
+                    "generator_model": args.generator_model,
+                    "judge_model": args.judge_model,
+                    "embedding_model": args.embedding_model,
+                    "temperature": 0.0,
+                    "prompt_version": args.prompt,
+                    "retrieval_mode": args.mode,
+                    "limit": args.limit,
+                },
+                scores=scores,
+                results=all_results,
+                artifact_paths=artifact_paths,
+                golden_path=args.golden_path,
+            )
+            console.print(f"[green]Logged MLflow run {run_id}[/green]")
         console.print(f"\n[green]Wrote RAG evaluation artifacts to {args.report_dir}[/green]")
     except MissingAnthropicKeyError as exc:
         console.print(f"[red]error: {exc}[/red]")

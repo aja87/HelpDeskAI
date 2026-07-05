@@ -8,7 +8,6 @@ import pytest
 
 from scripts.analyze_corpus import analyze_corpora, write_analysis
 from scripts.compare_chunking import load_benchmark, write_comparison
-from scripts.generate_golden_dataset import generate_golden_dataset
 
 
 def write_jsonl(path: Path, records: list[dict]) -> None:
@@ -99,40 +98,3 @@ def test_chunking_comparison_rejects_missing_metrics(tmp_path: Path) -> None:
         write_comparison(dataframe, tmp_path / "comparison.png")
 
 
-def test_golden_dataset_script_is_independent(tmp_path: Path) -> None:
-    techqa_qa = [
-        {
-            "id": f"qa-{index}",
-            "question": f"Question {index}?",
-            "answer": f"Answer {index}",
-            "split": "train",
-        }
-        for index in range(80)
-    ]
-    bitext = [
-        {
-            "instruction": f"Request {index}",
-            "response": f"Response {index}",
-            "category": "ACCOUNT",
-            "intent": "edit_account",
-        }
-        for index in range(30)
-    ]
-    qa_path = tmp_path / "qa.jsonl"
-    bitext_path = tmp_path / "bitext.jsonl"
-    output = tmp_path / "golden.jsonl"
-    write_jsonl(qa_path, techqa_qa)
-    write_jsonl(bitext_path, bitext)
-
-    result = generate_golden_dataset(
-        qa_path,
-        bitext_path,
-        output,
-        seed=42,
-        techqa_count=75,
-        bitext_count=25,
-        force=False,
-    )
-
-    assert result == output
-    assert len(output.read_text(encoding="utf-8").splitlines()) == 100

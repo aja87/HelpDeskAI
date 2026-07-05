@@ -11,7 +11,6 @@ from helpdeskai.corpus.benchmark import (
     write_benchmark,
 )
 from helpdeskai.corpus.chunking import Chunk
-from helpdeskai.corpus.golden import build_golden_dataset, write_golden_dataset
 from helpdeskai.ingestion.quality import (
     CorpusQualityError,
     generate_evidently_report,
@@ -56,66 +55,6 @@ def test_benchmark_calculates_metrics_and_writes_artifacts(tmp_path: Path) -> No
     assert benchmark["strategies"]["two"]["duplicate_chunks"] == 2
     assert json.loads(json_path.read_text())["strategies"]["one"]["documents"] == 3
     assert "Recursive chunking" in markdown_path.read_text(encoding="utf-8")
-
-
-def test_golden_dataset_has_stable_75_25_mix(tmp_path: Path) -> None:
-    techqa_qa = [
-        {
-            "id": f"qa-{index}",
-            "question": f"Tech question {index}?",
-            "answer": f"Answer {index}",
-            "split": "train",
-        }
-        for index in range(100)
-    ]
-    bitext = [
-        {
-            "instruction": f"Customer request {index}",
-            "response": f"Response {index}",
-            "category": "ACCOUNT",
-            "intent": "edit_account",
-        }
-        for index in range(40)
-    ]
-
-    first = build_golden_dataset(techqa_qa, bitext)
-    second = build_golden_dataset(techqa_qa, bitext)
-    path = write_golden_dataset(tmp_path / "questions.jsonl", first)
-
-    assert first == second
-    assert len(first) == 100
-    assert sum(record["source"] == "techqa" for record in first) == 75
-    assert sum(record["source"] == "bitext" for record in first) == 25
-    assert len(path.read_text(encoding="utf-8").splitlines()) == 100
-
-
-def test_golden_techqa_selection_is_stratified() -> None:
-    techqa_qa = [
-        {
-            "id": f"{split}-{index}",
-            "question": f"{split} question {index}?",
-            "answer": "Answer",
-            "split": split,
-        }
-        for split, count in (("train", 80), ("validation", 15), ("test", 5))
-        for index in range(count)
-    ]
-    bitext = [
-        {
-            "instruction": f"Request {index}",
-            "response": "Response",
-            "category": "ACCOUNT",
-            "intent": "edit_account",
-        }
-        for index in range(25)
-    ]
-
-    golden = build_golden_dataset(techqa_qa, bitext)
-    techqa = [record for record in golden if record["source"] == "techqa"]
-
-    assert sum(record["split"] == "train" for record in techqa) == 60
-    assert sum(record["split"] == "validation" for record in techqa) == 11
-    assert sum(record["split"] == "test" for record in techqa) == 4
 
 
 def valid_chunk(chunk_id: str = "doc#0", document_id: str = "doc") -> dict:

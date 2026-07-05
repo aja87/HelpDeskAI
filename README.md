@@ -269,6 +269,68 @@ uv run python scripts/run_agent.py --export-mermaid docs/agent_graph.mmd
 La comparaison LangGraph vs CrewAI est documentee dans
 `docs/agents_langgraph_vs_crewai.md`.
 
+## LLMOps, observabilite et FinOps
+
+La phase 7 ajoute MLflow pour le tracking et le registry de prompts, Langfuse
+pour les traces agent temps reel, et des scripts FinOps/evaluation continue.
+
+Demarrer la stack locale :
+
+```bash
+docker compose --profile observability up -d
+```
+
+Services principaux :
+
+- MLflow : http://127.0.0.1:5000 ;
+- Langfuse : http://localhost:3000 ;
+- MinIO console Langfuse : http://localhost:9091.
+
+Variables utiles :
+
+```bash
+$env:ANTHROPIC_API_KEY = "..."
+$env:MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
+$env:LANGFUSE_PUBLIC_KEY = "pk-lf-..."
+$env:LANGFUSE_SECRET_KEY = "sk-lf-..."
+$env:LANGFUSE_HOST = "http://localhost:3000"
+```
+
+Logger une evaluation Ragas dans MLflow :
+
+```bash
+uv run python scripts/evaluate_rag.py --prompt strict --limit 2 --mlflow-tracking-uri http://127.0.0.1:5000
+```
+
+Enregistrer les prompts `strict`, `pedagogical` et `concise` dans le registry
+MLflow, avec aliases `dev`, `staging` et `production` :
+
+```bash
+uv run python scripts/register_prompts.py --promote-from-eval
+```
+
+Tracer l'agent LangGraph dans Langfuse :
+
+```bash
+uv run python scripts/run_agent_langfuse.py --with-mcp
+```
+
+Produire le dashboard FinOps :
+
+```bash
+uv run python scripts/finops_dashboard.py --csv reports/finops/scenarios.csv
+```
+
+Executer l'evaluation continue et la detection de drift :
+
+```bash
+uv run python scripts/continuous_eval.py --sample-ratio 0.05
+uv run python scripts/detect_eval_drift.py --threshold 0.05
+```
+
+Les scripts qui appellent Claude, MLflow ou Langfuse sont prevus pour une
+execution manuelle. Les tests CI restent offline.
+
 ## Validation
 
 ```bash
