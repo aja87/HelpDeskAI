@@ -76,6 +76,7 @@ def _build_config(args: Namespace) -> AgentsConfig:
         max_iterations=args.max_iterations,
         max_tokens=args.max_tokens,
         graph_path=args.graph_path,
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
     )
 
 

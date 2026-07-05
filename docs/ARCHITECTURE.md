@@ -36,7 +36,7 @@ Consequence: un script dans scripts ne doit contenir que l'entree CLI, puis dele
 | helpdeskai/mcp_servers/ | Exposition des outils metier (CRM, KB, etc.) | Contrats MCP valides |
 | helpdeskai/observability/ | Traces, metriques, evaluation offline/online | Runs MLflow/Langfuse + rapports |
 
-### Module: architecture corpus
+### Module phase 0: architecture corpus
 
 Le telechargement de corpus est maintenant organise ainsi:
 
@@ -53,7 +53,7 @@ Ce decoupage permet:
 - des tests unitaires plus ciblables par couche
 - un script CLI stable meme si la logique interne evolue
 
-### Module: architecture ingestion
+### Module phase 1: architecture ingestion
 
 L'ingestion suit maintenant la meme regle que corpus:
 
@@ -68,7 +68,7 @@ L'ingestion suit maintenant la meme regle que corpus:
 
 Regle explicite: aucun parsing CLI ingestion dans les sous-modules helpdeskai/ingestion.
 
-### Module: architecture indexation
+### Module phase 2: architecture indexation
 
 L'indexation suit la même logique:
 
@@ -80,7 +80,7 @@ L'indexation suit la même logique:
 - helpdeskai/indexing/models: modèle de document (chunks)
 - helpdeskai/indexing/qdrant_store: initialisation du client Qdrant et opérations CRUD sur les collections
 
-### Module: architecture retrieval
+### Module phase 3: architecture retrieval
 
 Le retrieval suit la même logique:
 
@@ -90,15 +90,25 @@ Le retrieval suit la même logique:
 - helpdeskai/retrieval/config.py : constantes et configuration typed.
 - helpdeskai/retrieval/io_utils.py: read/write JSONL et JSON.
 
-### Module: architecture RAG
+### Module phase 4: architecture RAG
 
 Le RAG suit la même logique:
 
 - scripts/search_rag.py: script executable avec toute la CLI pour une recherche RAG.
 - scripts/evaluate_rag.py: script de génération du rapport d'évaluation du RAG.
 - helpdeskai/rag/workflow.py: orchestration du pipeline et taches.
-- helpdeskai/indexing/config.py: constantes et configuration typed.
-- helpdeskai/retrieval/prompts.py: définition des variantes de prompts.
+- helpdeskai/rag/config.py: constantes et configuration typed.
+- helpdeskai/rag/prompts.py: définition des variantes de prompts.
+
+
+### Module phase 5: architecture agents
+
+La structure agentique suit la même logique:
+
+- scripts/run_agents.py: script executable avec toute la CLI pour la recherche agentique.
+- scripts/generate_graph.py: script de génération du graph langgraph du modèle agentique.
+- helpdeskai/agents/workflow.py: orchestration du pipeline et taches.
+- helpdeskai/agents/config.py: constantes et configuration typed.
 
 
 ## Flux de donnees

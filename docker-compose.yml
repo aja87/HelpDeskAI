@@ -50,6 +50,28 @@ services:
       - qdrant
       - mlflow
 
+  crm-mcp:
+    image: python:3.11-slim
+    profiles: ["mcp"]
+    working_dir: /app
+    command: sh -c "pip install -e . && python scripts/run_mcp.py serve-crm"
+    environment:
+      HELPDESKAI_MCP_TOKEN: ${HELPDESKAI_MCP_TOKEN:-dev-token-unsafe}
+    volumes:
+      - .:/app
+
+  knowledge-mcp:
+    image: python:3.11-slim
+    profiles: ["mcp"]
+    working_dir: /app
+    command: sh -c "pip install -e . && python scripts/run_mcp.py serve-knowledge"
+    environment:
+      HELPDESKAI_MCP_TOKEN: ${HELPDESKAI_MCP_TOKEN:-dev-token-unsafe}
+    volumes:
+      - .:/app
+    depends_on:
+      - qdrant
+
 volumes:
   qdrant_data:
   mlflow_data:
