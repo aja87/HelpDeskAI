@@ -8,6 +8,7 @@ from pathlib import Path
 
 from helpdeskai.corpus.config import DATA_DIR, LOG_DIR, LOG_FILE, DownloadConfig
 from helpdeskai.corpus.downloader import run_download
+from helpdeskai.common.logging import init_logging
 
 
 def parse_args() -> DownloadConfig:
@@ -24,23 +25,11 @@ def parse_args() -> DownloadConfig:
     return DownloadConfig(**vars(parser.parse_args()))
 
 
-def configure_logging(log_dir: Path = LOG_DIR) -> None:
-    """Configure file and stdout logging used by corpus download scripts."""
-
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = os.path.join(log_dir, LOG_FILE)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s %(message)s",
-        handlers=[logging.FileHandler(log_file), logging.StreamHandler(sys.stdout)],
-    )
-
-
 def main() -> None:
     """CLI runner for corpus download."""
 
     config = parse_args()
-    configure_logging()
+    init_logging(log_dir=LOG_DIR, log_file=LOG_FILE, level=logging.INFO)
     run_download(config)
 
 if __name__ == "__main__":

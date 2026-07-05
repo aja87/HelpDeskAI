@@ -7,8 +7,7 @@ from pathlib import Path
 
 
 DATA_DIR = Path("data/raw")
-LOG_DIR = Path("logs")
-LOG_FILE = "app.log"
+LOG_FILE = "corpus.log"
 CHECKSUM_FILE = "checksums.sha256.json"
 
 TECHQA_REPO = "rojagtap/tech-qa"

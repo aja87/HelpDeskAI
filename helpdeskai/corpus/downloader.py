@@ -36,7 +36,7 @@ def run_download(config: DownloadConfig) -> None:
     if (
         not config.overwrite
         and all(path.exists() for path in output_files.values())
-        and verify_checksums(out_dir)
+        and verify_checksums(out_dir, CHECKSUM_FILE)
     ):
         logging.info("All dataset artifacts already exist and checksum verification passed.")
         return

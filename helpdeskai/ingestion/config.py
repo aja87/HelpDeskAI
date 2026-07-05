@@ -10,6 +10,7 @@ RAW_DIR = Path("data/raw")
 PROCESSED_DIR = Path("data/processed")
 REPORTS_DIR = Path("reports/ingestion")
 GOLDEN_DIR = Path("tests/golden")
+LOG_FILE = "ingestion.log"
 
 
 @dataclass(slots=True)

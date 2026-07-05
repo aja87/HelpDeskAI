@@ -3,7 +3,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from helpdeskai.ingestion.config import GOLDEN_DIR, PROCESSED_DIR, RAW_DIR, REPORTS_DIR, IngestionConfig
+from helpdeskai.common.logging import init_logging
+from helpdeskai.ingestion.config import GOLDEN_DIR, PROCESSED_DIR, RAW_DIR, REPORTS_DIR, LOG_FILE, IngestionConfig
 from helpdeskai.ingestion.workflow import run_ingestion_core
 
 
@@ -24,6 +25,7 @@ def parse_args() -> IngestionConfig:
 def main() -> None:
     """CLI entrypoint for local ingestion runs."""
 
+    init_logging(log_file=LOG_FILE)
     run_ingestion_core(parse_args())
 
 
