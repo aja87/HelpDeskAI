@@ -1,0 +1,609 @@
+from __future__ import annotations
+
+import json
+import importlib
+import os
+import sqlite3
+from typing import Any, Callable, Optional, TypedDict
+
+from dotenv import load_dotenv
+from langgraph.graph import StateGraph, START, END
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt
+from anthropic import Anthropic
+
+rag_search = None  # Placeholder pour la fonction de recherche RAG, à configurer selon l'environnement.
+load_dotenv()
+console = Console()
+LLM_MODEL = "claude-haiku-4-5-20251001"
+DB_PATH = "phase5.db"
+
+CLASSIFY_PROMPT = """Tu es un classifieur d'intent pour un agent support N1.
+Réponds UNIQUEMENT en JSON strict:
+{
+  "intent": "HIGH|MEDIUM|AMBIGUOUS|LOW",
+  "confidence": 0.0,
+  "sensitive_action": false,
+  "reason": "..."
+}
+
+Définitions:
+- HIGH: demande claire, réponse possible sans recherche documentaire.
+- MEDIUM: demande technique claire qui nécessite recherche RAG.
+- AMBIGUOUS: intention partiellement claire mais information clé manquante.
+- LOW: hors sujet, toxique, ou incompréhensible.
+
+Une action est sensible si la demande implique une action opérationnelle risquée
+(ex: remboursement, suppression, changement de plan, suspension, reset critique).
+
+Question : {question}"""
+
+CLARIFICATION_PROMPT = """Tu dois formuler UNE question de clarification courte pour un support N1.
+Réponds en JSON strict: {"clarification_question": "..."}
+
+Question utilisateur: {question}
+Contexte intent: {intent}
+"""
+
+GENERATE_PROMPT = """Tu es un agent support N1. Réponds en français.
+Contraintes:
+- Si le contexte documentaire est insuffisant, dis-le explicitement et propose une escalation.
+- N'invente jamais une version produit ou une procédure.
+
+Question: {question}
+Contexte RAG:
+{context}
+
+Réponds en JSON strict: {"answer": "..."}
+"""
+
+
+class State(TypedDict):
+    question: str
+    intent: Optional[str]
+    intent_confidence: float
+    intent_source: str
+    intent_reason: Optional[str]
+    retrieved_context: str
+    answer: Optional[str]
+    pending_sensitive_action: Optional[str]
+    approval: Optional[str]
+    clarification_question: Optional[str]
+    clarification_answer: Optional[str]
+    clarified_question: Optional[str]
+    route: Optional[str]
+    post_approval_route: Optional[str]
+    iteration: int
+    max_iterations: int
+    tokens_used: int
+    max_tokens: int
+    path_taken: list[str]
+    seen_signatures: dict[str, int]
+
+
+ClassifierFn = Callable[[str], dict[str, Any]]
+RagSearchFn = Callable[[str], str]
+
+
+# Construit l'etat initial d'une session agent avec les limites par defaut.
+def make_initial_state(question: str) -> State:
+    return {
+        "question": question,
+        "intent": None,
+        "intent_confidence": 0.0,
+        "intent_source": "none",
+        "intent_reason": None,
+        "retrieved_context": "",
+        "answer": None,
+        "pending_sensitive_action": None,
+        "approval": None,
+        "clarification_question": None,
+        "clarification_answer": None,
+        "clarified_question": None,
+        "route": None,
+        "post_approval_route": None,
+        "iteration": 0,
+        "max_iterations": 5,
+        "tokens_used": 0,
+        "max_tokens": 10000,
+        "path_taken": [],
+        "seen_signatures": {},
+    }
+
+
+# Approximation legere des tokens a partir de la taille texte (4 chars ~ 1 token).
+def estimate_tokens(*parts: Any) -> int:
+    total_chars = sum(len(str(p or "")) for p in parts)
+    return max(1, total_chars // 4)
+
+
+# Tente de parser une reponse JSON; fallback sur extraction du premier objet JSON du texte.
+def _extract_json(text: str) -> dict[str, Any]:
+    text = (text or "").strip()
+    if not text:
+        return {}
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(text[start : end + 1])
+            except json.JSONDecodeError:
+                return {}
+        return {}
+
+
+# Point d'appel unique vers l'API Anthropic via llm.messages.
+def _llm_messages(prompt: str, max_tokens: int = 200, temperature: float = 0.0) -> str:
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise RuntimeError("ANTHROPIC_API_KEY manquant pour utiliser llm.messages")
+    llm = Anthropic()
+    msg = llm.messages.create(
+        model=LLM_MODEL,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return msg.content[0].text
+
+
+# Classifieur par defaut: delegue totalement l'analyse d'intent au LLM.
+def _default_llm_classifier(question: str) -> dict[str, Any]:
+    raw = _llm_messages(CLASSIFY_PROMPT.format(question=question), max_tokens=120)
+    return _extract_json(raw)
+
+
+# Met a jour iteration/tokens pour centraliser la metrique de budget d'execution.
+def _bump_usage(state: dict[str, Any], *parts: Any) -> dict[str, Any]:
+    return {
+        "iteration": int(state.get("iteration", 0) or 0) + 1,
+        "tokens_used": int(state.get("tokens_used", 0) or 0) + estimate_tokens(*parts),
+    }
+
+
+# Node LangGraph: classifie la demande et extrait intent, confiance et sensibilite.
+def classify_intent(state: State, llm_classifier: Optional[ClassifierFn] = None) -> dict[str, Any]:
+    question = str(state.get("clarified_question") or state.get("question") or "")
+    classifier = llm_classifier or _default_llm_classifier
+    raw = classifier(question) or {}
+
+    intent = str(raw.get("intent", "LOW")).upper().strip()
+    if intent not in {"HIGH", "MEDIUM", "AMBIGUOUS", "LOW"}:
+        intent = "LOW"
+    confidence = float(raw.get("confidence", 0.0) or 0.0)
+    confidence = max(0.0, min(1.0, confidence))
+    sensitive = bool(raw.get("sensitive_action", False))
+    reason = str(raw.get("reason", "")) or None
+
+    # Le cout tient compte de la question et de la charge utile retournee par le LLM.
+    usage = _bump_usage(state, question, json.dumps(raw, ensure_ascii=True))
+    path = list(state.get("path_taken", [])) + ["classify_intent"]
+
+    updates: dict[str, Any] = {
+        "intent": intent,
+        "intent_confidence": confidence,
+        "intent_source": "llm",
+        "intent_reason": reason,
+        "pending_sensitive_action": "sensitive_request" if sensitive else None,
+        "path_taken": path,
+    }
+    updates.update(usage)
+    console.print(f"[dim]→ classify_intent: intent={intent} confidence={confidence:.2f}[/dim]")
+    return updates
+
+
+# Route conditionnelle apres classification: clarification/retrieval/generation/escalade.
+def route_after_classify(state: State) -> str:
+    # Garde-fous globaux: stop si boucle/budget/iterations depasses.
+    checks = safety_check(state, state.get("seen_signatures", {}))
+    if checks["loop"] or checks["over_budget"] or checks["over_iter"]:
+        return "escalate"
+
+    intent = str(state.get("intent") or "LOW").upper()
+    confidence = float(state.get("intent_confidence", 0.0) or 0.0)
+    sensitive = bool(state.get("pending_sensitive_action"))
+
+    # Routage principal selon intent + confiance.
+    if intent == "LOW":
+        base_route = "escalate"
+    elif intent == "AMBIGUOUS" or confidence < 0.55:
+        base_route = "clarification"
+    elif intent == "MEDIUM":
+        base_route = "retrieve"
+    else:
+        base_route = "generate"
+
+    # Human-in-the-loop impose avant toute action/reponse sensible.
+    if sensitive and base_route in {"retrieve", "generate"}:
+        return "human_approval"
+    return base_route
+
+
+# Placeholder de recherche documentaire tant que le vrai moteur RAG n'est pas branche.
+def _default_rag_search(question: str) -> str:
+    return (
+        "Aucun moteur RAG branche. Configurez rag_search(question) pour retourner "
+        "un contexte documentaire pertinent."
+    )
+
+
+# Node LangGraph: recupere le contexte documentaire associe a la question.
+def retrieve(state: State) -> dict[str, Any]:
+    question = str(state.get("clarified_question") or state.get("question") or "")
+    search_fn = rag_search or _default_rag_search
+    context = search_fn(question)
+
+    usage = _bump_usage(state, question, context)
+    path = list(state.get("path_taken", [])) + ["retrieve"]
+    return {
+        "retrieved_context": context,
+        "path_taken": path,
+        **usage,
+    }
+
+
+# Route conditionnelle apres retrieval.
+def route_after_retrieve(state: State) -> str:
+    checks = safety_check(state, state.get("seen_signatures", {}))
+    if checks["loop"] or checks["over_budget"] or checks["over_iter"]:
+        return "escalate"
+    return "generate"
+
+
+# Node LangGraph de clarification: soit pose une question, soit reinjecte la precision utilisateur.
+def clarification(state: State) -> dict[str, Any]:
+    answer = str(state.get("clarification_answer") or "").strip()
+    path = list(state.get("path_taken", [])) + ["clarification"]
+
+    # Si l'utilisateur a deja precise, on enrichit la question et on reclasse.
+    if answer:
+        clarified = (
+            f"{state.get('question', '').strip()}\n"
+            f"Precision utilisateur: {answer}"
+        )
+        usage = _bump_usage(state, answer)
+        return {
+            "clarified_question": clarified,
+            "route": "back_to_classify",
+            "path_taken": path,
+            **usage,
+        }
+
+    # Sinon on demande au LLM de produire une question de clarification unique.
+    prompt = CLARIFICATION_PROMPT.format(
+        question=str(state.get("question") or ""),
+        intent=str(state.get("intent") or "AMBIGUOUS"),
+    )
+
+    raw = _llm_messages(prompt, max_tokens=120)
+    parsed = _extract_json(raw)
+    clarif_q = str(parsed.get("clarification_question") or "").strip()
+
+    if not clarif_q:
+        clarif_q = "Pouvez-vous preciser votre besoin pour que je puisse vous aider ?"
+    usage = _bump_usage(state, prompt, clarif_q)
+    return {
+        "clarification_question": clarif_q,
+        "route": "await_user",
+        "path_taken": path,
+        **usage,
+    }
+
+
+# Route conditionnelle de la clarification: reprise du graphe ou attente de l'utilisateur.
+def route_after_clarification(state: State) -> str:
+    route = str(state.get("route") or "await_user")
+    if route == "back_to_classify":
+        return "classify_intent"
+    return "END"
+
+
+# Node LangGraph: genere la reponse finale a partir de la question et du contexte RAG.
+def generate(state: State) -> dict[str, Any]:
+    question = str(state.get("clarified_question") or state.get("question") or "")
+    context = str(state.get("retrieved_context") or "")
+    path = list(state.get("path_taken", [])) + ["generate"]
+
+    raw = _llm_messages(
+        GENERATE_PROMPT.format(question=question, context=context),
+        max_tokens=500,
+        temperature=0.1,
+    )
+    parsed = _extract_json(raw)
+    answer = str(parsed.get("answer") or "").strip()
+    if not answer:
+        # Degradation gracieuse si le modele ne renvoie pas le JSON attendu.
+        answer = raw.strip()
+
+    usage = _bump_usage(state, question, context, answer)
+    return {
+        "answer": answer,
+        "path_taken": path,
+        **usage,
+    }
+
+
+# Route conditionnelle apres generation.
+def route_after_generate(state: State) -> str:
+    checks = safety_check(state, state.get("seen_signatures", {}))
+    if checks["loop"] or checks["over_budget"] or checks["over_iter"]:
+        return "escalate"
+    return "END"
+
+
+# Node Human-in-the-loop: bloque la suite tant qu'aucune validation explicite n'est fournie.
+def human_approval(state: State) -> dict[str, Any]:
+    path = list(state.get("path_taken", [])) + ["human_approval"]
+    approval = state.get("approval")
+    post_approval_route = str(state.get("post_approval_route") or "generate")
+
+    # Normalise la destination apres approbation pour eviter les routes incoherentes.
+    if post_approval_route not in {"retrieve", "generate"}:
+        intent = str(state.get("intent") or "LOW").upper()
+        if intent == "MEDIUM":
+            post_approval_route = "retrieve"
+        else:
+            post_approval_route = "generate"
+
+    # Pas de decision: on suspend le run et on attend une validation humaine.
+    if approval is None:
+        return {
+            "route": "await_approval",
+            "answer": (
+                "Action sensible detectee: validation humaine requise. "
+                "Fournissez approval='approved' ou approval='rejected'."
+            ),
+            "post_approval_route": post_approval_route,
+            "path_taken": path,
+        }
+
+    # Decision explicite recue: approved => reprise, rejected => escalade.
+    normalized = str(approval).strip().lower()
+    if normalized == "approved":
+        return {
+            "route": post_approval_route,
+            "approval": "approved",
+            "path_taken": path,
+        }
+
+    return {
+        "route": "escalate",
+        "approval": "rejected",
+        "path_taken": path,
+        "answer": "Action sensible refusee par validation humaine.",
+    }
+
+
+# Route conditionnelle apres point HITL.
+def route_after_human_approval(state: State) -> str:
+    route = str(state.get("route") or "await_approval")
+    if route == "retrieve":
+        return "retrieve"
+    if route == "generate":
+        return "generate"
+    if route == "escalate":
+        return "escalate"
+    return "END"
+
+
+# Node d'escalade: message standardise selon la raison de sortie (budget/boucle/iter).
+def escalate(state: State) -> dict[str, Any]:
+    checks = safety_check(state, state.get("seen_signatures", {}))
+    path = list(state.get("path_taken", [])) + ["escalate"]
+    reason_parts: list[str] = []
+    if checks["over_budget"]:
+        reason_parts.append("Budget tokens depasse")
+    if checks["over_iter"]:
+        reason_parts.append("Nombre max d'iterations depasse")
+    if checks["loop"]:
+        reason_parts.append("Boucle detectee")
+    if not reason_parts:
+        reason_parts.append("Escalade vers un agent humain")
+
+    answer = f"Escalade: {'; '.join(reason_parts)}."
+    usage = _bump_usage(state, answer)
+    return {
+        "answer": answer,
+        "path_taken": path,
+        **usage,
+    }
+
+
+# Assemble le graphe d'etats LangGraph et configure les interruptions de reprise.
+def build_graph(checkpointer: Any):
+    graph = StateGraph(State)
+    # Declaration explicite des nodes.
+    graph.add_node("classify_intent", classify_intent)
+    graph.add_node("retrieve", retrieve)
+    graph.add_node("clarification", clarification)
+    graph.add_node("human_approval", human_approval)
+    graph.add_node("generate", generate)
+    graph.add_node("escalate", escalate)
+
+    # Entree du flux.
+    graph.add_edge(START, "classify_intent")
+    graph.add_conditional_edges(
+        "classify_intent",
+        route_after_classify,
+        {
+            "generate": "generate",
+            "retrieve": "retrieve",
+            "human_approval": "human_approval",
+            "clarification": "clarification",
+            "escalate": "escalate",
+        },
+    )
+
+    graph.add_conditional_edges(
+        "retrieve",
+        route_after_retrieve,
+        {
+            "generate": "generate",
+            "escalate": "escalate",
+        },
+    )
+
+    graph.add_conditional_edges(
+        "clarification",
+        route_after_clarification,
+        {
+            "classify_intent": "classify_intent",
+            "END": END,
+        },
+    )
+
+    graph.add_conditional_edges(
+        "generate",
+        route_after_generate,
+        {
+            "escalate": "escalate",
+            "END": END,
+        },
+    )
+
+    graph.add_conditional_edges(
+        "human_approval",
+        route_after_human_approval,
+        {
+            "retrieve": "retrieve",
+            "generate": "generate",
+            "escalate": "escalate",
+            "END": END,
+        },
+    )
+
+    # Sortie terminale par escalade.
+    graph.add_edge("escalate", END)
+    # Interruption avant clarification/HITL pour permettre reprise de conversation.
+    return graph.compile(checkpointer=checkpointer, interrupt_before=["clarification", "human_approval"])
+
+
+# Verifie les limites de securite: boucle, budget tokens, nombre max d'iterations.
+def safety_check(state: dict[str, Any], seen_signatures: dict[str, int]) -> dict[str, bool]:
+    signature = (
+        state.get("intent"),
+        str(state.get("question", "")).strip().lower(),
+        str(state.get("answer", "")).strip().lower()[:160],
+    )
+    signature_key = json.dumps(signature, ensure_ascii=True)
+
+    # Evite de compter plusieurs fois la meme signature dans la meme etape de routage.
+    last_key = str(state.get("_last_safety_signature") or "")
+    if signature_key != last_key:
+        seen_signatures[signature_key] = seen_signatures.get(signature_key, 0) + 1
+        state["_last_safety_signature"] = signature_key
+
+    loop = seen_signatures[signature_key] >= 2
+
+    tokens_used = int(state.get("tokens_used", 0) or 0)
+    max_tokens = int(state.get("max_tokens", 10000) or 10000)
+    iteration = int(state.get("iteration", 0) or 0)
+    max_iterations = int(state.get("max_iterations", 5) or 5)
+
+    over_budget = tokens_used > max_tokens
+    over_iter = iteration >= max_iterations
+    state["seen_signatures"] = seen_signatures
+    return {"loop": loop, "over_budget": over_budget, "over_iter": over_iter}
+
+
+# Ouvre la persistence SQLite et instancie le checkpointer LangGraph associe.
+def _build_checkpointer(db_path: str = DB_PATH) -> tuple[sqlite3.Connection, Any]:
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    try:
+        sqlite_module = importlib.import_module("langgraph.checkpoint.sqlite")
+    except ImportError as exc:
+        conn.close()
+        raise RuntimeError(
+            "Module checkpoint SQLite LangGraph introuvable. "
+            "Installez 'langgraph-checkpoint-sqlite'."
+        ) from exc
+    return conn, sqlite_module.SqliteSaver(conn)
+
+
+# API d'execution: demarrage de session ou reprise apres interruption (clarification/HITL).
+def run(
+    request: Optional[str] = None,
+    user: str = "anonymous",
+    thread_id: Optional[str] = None,
+    approval: Optional[str] = None,
+    clarification_answer: Optional[str] = None,
+    db_path: str = DB_PATH,
+) -> dict[str, Any]:
+    conn, saver = _build_checkpointer(db_path)
+    try:
+        agent = build_graph(saver)
+        tid = thread_id or f"support_{user}"
+        config = {"configurable": {"thread_id": tid}}
+
+        # Mode demarrage: on lance une nouvelle execution avec etat initial.
+        if request is not None:
+            current = make_initial_state(request)
+            if approval is not None:
+                current["approval"] = approval
+            if clarification_answer is not None:
+                current["clarification_answer"] = clarification_answer
+            result = agent.invoke(current, config=config)
+            return result
+
+        # Mode reprise: on injecte la reponse humaine dans l'etat checkpointed.
+        updates: dict[str, Any] = {}
+        if approval is not None:
+            updates["approval"] = approval
+        if clarification_answer is not None:
+            updates["clarification_answer"] = clarification_answer
+        if updates:
+            agent.update_state(config, updates)
+
+        result = agent.invoke(None, config=config)
+        return result
+    finally:
+        conn.close()
+
+
+# Demo CLI locale pour visualiser le graphe et tester la reprise interactive.
+def main() -> None:
+    conn, saver = _build_checkpointer(DB_PATH)
+    try:
+        agent = build_graph(saver)
+        console.print("\n[bold orange3]HelpDeskAI Phase 5 - Support Agent[/bold orange3]\n")
+        console.print("[bold]Graphe ASCII:[/bold]")
+        try:
+            console.print(agent.get_graph().draw_ascii())
+        except Exception as err:
+            console.print(f"[dim]ASCII rendering impossible: {err}[/dim]")
+
+        # Tour initial.
+        question = Prompt.ask("Question utilisateur")
+        thread_id = 't_' + str(hash(question))  # Simple hash pour thread_id unique par question.
+
+        first = agent.invoke(make_initial_state(question), config={"configurable": {"thread_id": thread_id}})
+        console.print(Panel(first.get("answer", "(pas de reponse)"), title="Reponse", border_style="orange3"))
+
+        # Reprise sur question de clarification.
+        if first.get("route") == "await_user":
+            clar = Prompt.ask(first.get("clarification_question") or "Pouvez-vous preciser ?")
+            agent.update_state(
+                {"configurable": {"thread_id": thread_id}},
+                {"clarification_answer": clar},
+            )
+            resumed = agent.invoke(None, config={"configurable": {"thread_id": thread_id}})
+            console.print(Panel(resumed.get("answer", "(pas de reponse)"), title="Reprise", border_style="green"))
+
+        # Reprise sur validation humaine.
+        if first.get("route") == "await_approval":
+            decision = Prompt.ask("Validation humaine (approved/rejected)", default="rejected")
+            agent.update_state(
+                {"configurable": {"thread_id": thread_id}},
+                {"approval": decision},
+            )
+            resumed = agent.invoke(None, config={"configurable": {"thread_id": thread_id}})
+            console.print(Panel(resumed.get("answer", "(pas de reponse)"), title="Decision", border_style="yellow"))
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    main()
