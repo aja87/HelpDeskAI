@@ -43,6 +43,14 @@ class ToolResult(TypedDict, total=False):
     error: str | None
 
 
+class ClarificationRequest(TypedDict, total=False):
+    """Pending clarification needed to complete a previous user request."""
+
+    type: Literal["customer_id"]
+    question: str
+    intent: str
+
+
 class RunnableGraph(Protocol):
     """Subset of the compiled LangGraph API used by the wrapper and tests."""
 
@@ -60,6 +68,9 @@ class RunnableGraph(Protocol):
 
     def update_state(self, config: dict[str, Any], values: dict[str, Any]) -> None:
         """Patch a checkpointed state before resuming."""
+
+    def get_state(self, config: dict[str, Any]) -> Any:
+        """Return the latest checkpointed state for one thread."""
 
     def get_graph(self) -> Any:
         """Return the drawable graph object."""
@@ -148,6 +159,8 @@ class SupportAgentState(TypedDict, total=False):
     tokens_used: int
     budget_exceeded: bool
     path_taken: list[str]
+    clarification_request: ClarificationRequest | None
+    intent_override: str | None
 
 
 def _estimate_tokens(*values: Any) -> int:
@@ -312,6 +325,10 @@ def _customer_id_from_context(state: SupportAgentState) -> str | None:
     return str(customer_id) if customer_id else None
 
 
+def _customer_id_clarification(question: str, intent: str) -> ClarificationRequest:
+    return {"type": "customer_id", "question": question, "intent": intent}
+
+
 def _make_ticket_call(question: str, *, customer_id: str | None = None) -> ToolCall:
     subject = "Validation action support sensible"
     if re.search(r"\bescalad|urgent", question, flags=re.IGNORECASE):
@@ -425,7 +442,15 @@ def build_support_graph(
 
     def classify_intent(state: SupportAgentState) -> dict[str, Any]:
         question = state.get("question", "")
-        decision = classifier.classify(question)
+        intent_override = state.get("intent_override")
+        if intent_override in ALLOWED_INTENTS:
+            decision = _decision_from_intent(
+                intent_override,
+                0.95,
+                sensitive=intent_override == "sensitive_action",
+            )
+        else:
+            decision = classifier.classify(question)
         intent = "sensitive_action" if decision.sensitive else decision.intent
         route = _route_for_intent(intent)
         update = _append_path(state, "classify_intent", question, intent, route)
@@ -446,6 +471,15 @@ def build_support_graph(
             "knowledge_contexts": [],
             "needs_approval": False,
             "clarification_needed": False,
+            "clarification_request": None,
+            "pending_action": None,
+            "approval": None,
+            "action_result": None,
+            "account_context": None,
+            "answer": "",
+            "quality_passed": False,
+            "quality_reason": "",
+            "intent_override": None,
         }
         if exceeded:
             result["answer"] = (
@@ -499,6 +533,7 @@ def build_support_graph(
                         "Cette action est sensible. Pouvez-vous fournir l'identifiant client "
                         "au format cust_xxx avant validation ?"
                     ),
+                    "clarification_request": _customer_id_clarification(question, intent),
                     "tool_plan": [],
                     "needs_approval": False,
                 }
@@ -520,6 +555,7 @@ def build_support_graph(
                         "Votre demande concerne un compte NovaCloud. Pouvez-vous fournir "
                         "l'identifiant client au format cust_xxx ?"
                     ),
+                    "clarification_request": _customer_id_clarification(question, intent),
                     "tool_plan": [],
                     "needs_approval": False,
                 }
@@ -547,6 +583,7 @@ def build_support_graph(
                         "Cette demande necessite le CRM et la documentation. Pouvez-vous "
                         "fournir l'identifiant client au format cust_xxx ?"
                     ),
+                    "clarification_request": _customer_id_clarification(question, intent),
                     "tool_plan": [],
                     "needs_approval": False,
                 }
@@ -580,6 +617,7 @@ def build_support_graph(
             "needs_approval": needs_approval,
             "pending_action": pending_action,
             "clarification_needed": False,
+            "clarification_request": None,
         }
 
     def request_human_approval(state: SupportAgentState) -> dict[str, Any]:
@@ -855,11 +893,52 @@ class SupportAgent:
         )
         return cls(graph)
 
+    def _resolve_clarification_reply(
+        self,
+        question: str,
+        *,
+        config: dict[str, Any],
+    ) -> tuple[str, str | None]:
+        customer_id = _extract_customer_id(question)
+        if not customer_id:
+            return question, None
+        try:
+            snapshot = self.graph.get_state(config)
+        except Exception:
+            return question, None
+        previous = getattr(snapshot, "values", None) or {}
+        clarification = previous.get("clarification_request") or {}
+        if clarification.get("type") != "customer_id":
+            return question, None
+        original_question = str(clarification.get("question") or "").strip()
+        previous_intent = str(clarification.get("intent") or "").strip()
+        if not original_question or previous_intent not in ALLOWED_INTENTS:
+            return question, None
+        return f"{original_question}\nIdentifiant client: {customer_id}", previous_intent
+
     def ask(self, question: str, *, thread_id: str = "default") -> dict[str, Any]:
+        config = {"configurable": {"thread_id": thread_id}}
+        resolved_question, intent_override = self._resolve_clarification_reply(
+            question,
+            config=config,
+        )
         state: SupportAgentState = {
-            "question": question,
+            "question": resolved_question,
             "approval": None,
             "pending_action": None,
+            "action_result": None,
+            "account_context": None,
+            "knowledge_contexts": [],
+            "tool_plan": [],
+            "tool_results": [],
+            "needs_approval": False,
+            "clarification_needed": False,
+            "clarification_request": None,
+            "intent_override": intent_override,
+            "answer": "",
+            "sources": [],
+            "quality_passed": False,
+            "quality_reason": "",
             "iterations": 0,
             "tokens_used": 0,
             "path_taken": [],
@@ -867,7 +946,7 @@ class SupportAgent:
         return _run_graph_values(
             self.graph,
             state,
-            config={"configurable": {"thread_id": thread_id}},
+            config=config,
         )
 
     def approve(self, *, thread_id: str = "default") -> dict[str, Any]:

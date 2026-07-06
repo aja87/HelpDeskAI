@@ -35,6 +35,16 @@ class FakeClassifier:
         return IntentDecision(self.intent, self.confidence)
 
 
+class SequenceClassifier:
+    def __init__(self, decisions: list[IntentDecision]) -> None:
+        self.decisions = decisions
+        self.calls: list[str] = []
+
+    def classify(self, question: str) -> IntentDecision:
+        self.calls.append(question)
+        return self.decisions.pop(0)
+
+
 class FakeMcp:
     def __init__(self, *, fail: bool = False, customer_error: str | None = None) -> None:
         self.fail = fail
@@ -291,6 +301,31 @@ def test_account_question_without_customer_id_asks_specific_clarification() -> N
         "plan_mcp_calls",
         "ask_clarification",
     ]
+
+
+def test_account_clarification_reply_with_customer_id_resumes_original_request() -> None:
+    classifier = SequenceClassifier(
+        [
+            IntentDecision("account_question", 0.95),
+            IntentDecision("ambiguous", 0.3, ambiguous=True),
+        ]
+    )
+    mcp = FakeMcp()
+    agent = SupportAgent.create(
+        intent_classifier=classifier,
+        checkpointer=MemorySaver(),
+        mcp_client=mcp,
+    )
+    thread_id = "clarify-account"
+
+    first = agent.ask("le statut de mon abonnement ?", thread_id=thread_id)
+    second = agent.ask("cust_acme", thread_id=thread_id)
+
+    assert "identifiant client" in first["answer"]
+    assert classifier.calls == ["le statut de mon abonnement ?"]
+    assert second["intent"] == "account_question"
+    assert mcp.calls == [("get_customer", "cust_acme"), ("get_subscription_status", "cust_acme")]
+    assert "active" in second["answer"]
 
 
 def test_sensitive_action_interrupts_after_human_approval_request_and_resumes() -> None:
