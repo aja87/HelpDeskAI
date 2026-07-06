@@ -81,7 +81,6 @@ def write_benchmark(path: Path, benchmark: dict) -> tuple[Path, Path]:
         "",
         f"Deterministic comparison on {sample_size} TechQA documents (seed {seed}).",
         "",
-,
     ]
     if benchmark.get("semantic_embedder"):
         lines.extend(["Semantic embedder: " + str(benchmark["semantic_embedder"]), ""])
