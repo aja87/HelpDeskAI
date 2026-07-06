@@ -105,8 +105,22 @@ def make_optimized(base: Scenario) -> Scenario:
     )
 
 
+def make_current_poc(base: Scenario) -> Scenario:
+    """Apply only the optimization already active in the current POC."""
+    return Scenario(
+        name=f"{base.name} (current POC)",
+        requests_per_month=base.requests_per_month,
+        input_tokens=base.input_tokens,
+        output_tokens=base.output_tokens,
+        model=base.model,
+        compression_ratio=0.4,
+        infra_usd_per_month=base.infra_usd_per_month,
+        embedding_usd_per_month=base.embedding_usd_per_month,
+    )
+
+
 def default_scenarios() -> list[Scenario]:
-    """Return the standard Phase 7 scenarios."""
+    """Return the standard FinOps scenarios."""
     return [
         Scenario("POC (1k req/month)", 1_000, infra_usd_per_month=40.0),
         Scenario("Small scale (10k)", 10_000),
@@ -123,11 +137,21 @@ def recommend(scenarios: list[Scenario]) -> list[str]:
         optimized_cost = make_optimized(base).effective_cost()
         savings = float(base_cost["total_usd"]) - float(optimized_cost["total_usd"])
         savings_pct = savings / float(base_cost["total_usd"]) * 100 if base_cost["total_usd"] else 0
-        prefix = (
-            f"[{base.name}] Save ${savings:.2f}/month ({savings_pct:.1f}%) with "
-            "prompt caching, Haiku routing, compression and semantic cache. "
-        )
-        if base.requests_per_month < 5_000:
+        if savings >= 0:
+            prefix = (
+                f"[{base.name}] Save ${savings:.2f}/month ({savings_pct:.1f}%) with "
+                "prompt caching, Haiku routing, compression and semantic cache. "
+            )
+        else:
+            prefix = (
+                f"[{base.name}] Full optimization costs ${abs(savings):.2f}/month more "
+                f"at this volume ({abs(savings_pct):.1f}%). "
+            )
+        if savings < 0:
+            advice = (
+                "Keep current POC compression first; add other levers once traces justify them."
+            )
+        elif base.requests_per_month < 5_000:
             advice = "Prioritize prompt caching and Haiku routing; semantic cache can wait."
         elif base.requests_per_month < 50_000:
             advice = "Add semantic cache once repeated support questions are visible in traces."

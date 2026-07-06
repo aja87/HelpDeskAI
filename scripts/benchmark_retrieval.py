@@ -43,6 +43,26 @@ def load_cases(path: Path) -> list[dict]:
     return cases
 
 
+def analyze_alignment(cases: Sequence[dict], indexed_document_ids: set[str]) -> dict:
+    """Return coverage between golden expected documents and indexed documents."""
+    expected_document_ids = {str(case["document_id"]) for case in cases}
+    aligned_cases = [
+        case for case in cases if str(case["document_id"]) in indexed_document_ids
+    ]
+    missing = sorted(expected_document_ids - indexed_document_ids)
+    return {
+        "golden_cases": len(cases),
+        "golden_unique_documents": len(expected_document_ids),
+        "indexed_unique_documents": len(indexed_document_ids),
+        "aligned_cases": len(aligned_cases),
+        "aligned_unique_documents": len(
+            {str(case["document_id"]) for case in aligned_cases}
+        ),
+        "missing_unique_documents": len(missing),
+        "missing_sample": missing[:10],
+    }
+
+
 def recall_at_k(retrieved: Sequence[str], relevant: set[str], k: int) -> float:
     return len(set(retrieved[:k]) & relevant) / len(relevant) if relevant else 0.0
 
@@ -100,23 +120,75 @@ def write_csv(path: Path, rows: Sequence[dict[str, float | str]]) -> None:
         writer.writerows(rows)
 
 
-def write_markdown(path: Path, rows: Sequence[dict[str, float | str]], cases: int) -> None:
+def skipped_rows() -> list[dict[str, float | str]]:
+    """Return placeholder metric rows when the golden set is not aligned."""
+    return [
+        {
+            "mode": mode.value,
+            "recall@5": "n/a",
+            "recall@10": "n/a",
+            "mrr": "n/a",
+            "p50_ms": "n/a",
+            "p95_ms": "n/a",
+        }
+        for mode in SearchMode
+    ]
+
+
+def write_markdown(
+    path: Path,
+    rows: Sequence[dict[str, float | str]],
+    cases: int,
+    alignment: dict,
+) -> None:
     lines = [
         "# Retrieval Benchmark",
         "",
-        f"Golden cases: {cases}",
+        f"Retrieval-eligible golden cases: {cases}",
+        f"Aligned cases used for metrics: {alignment['aligned_cases']}",
+        f"Golden unique documents: {alignment['golden_unique_documents']}",
+        f"Indexed unique documents: {alignment['indexed_unique_documents']}",
+        f"Missing golden documents from indexed corpus: {alignment['missing_unique_documents']}",
         "",
         "Embedding model: `BAAI/bge-m3`.",
         "",
-        (
-            "Model choice: `BAAI/bge-m3` is multilingual, aligns with the ingestion "
-            "tokenizer already selected for chunking, runs locally without an API key, "
-            "and is a strong retrieval-oriented BGE model on MTEB-style benchmarks."
-        ),
-        "",
-        "| Mode | Recall@5 | Recall@10 | MRR | p50 ms | p95 ms |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
     ]
+    if alignment["aligned_cases"] == 0:
+        lines.extend(
+            [
+                "## Diagnosis",
+                "",
+                (
+                    "The current golden retrieval cases reference TechQA Q/A "
+                    "`document_id` values that are not present in the indexed "
+                    "TechQA document corpus. Recall metrics are therefore not "
+                    "computed for this report."
+                ),
+                "",
+                "Missing document sample:",
+                "",
+                *[f"- `{document_id}`" for document_id in alignment["missing_sample"]],
+                "",
+            ]
+        )
+    elif alignment["missing_unique_documents"]:
+        lines.extend(
+            [
+                "## Alignment Note",
+                "",
+                (
+                    "Some golden documents are missing from the indexed corpus. "
+                    "Metrics below use only aligned cases."
+                ),
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "| Mode | Recall@5 | Recall@10 | MRR | p50 ms | p95 ms |",
+            "| --- | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
     for row in rows:
         lines.append(
             f"| {row['mode']} | {row['recall@5']} | {row['recall@10']} | "
@@ -134,13 +206,22 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     config = RetrievalConfig(corpus_path=args.corpus_path)
     engine = SearchEngine(config=config)
+    indexed_document_ids = {record.document_id for record in engine.records}
+    alignment = analyze_alignment(cases, indexed_document_ids)
+    aligned_cases = [
+        case for case in cases if str(case["document_id"]) in indexed_document_ids
+    ]
 
     def run(query: str, mode: SearchMode) -> list[SearchResult]:
         return engine.search(query, top_k=args.top_k, mode=mode)
 
-    rows = [benchmark_mode(mode, cases, run) for mode in SearchMode]
+    rows = (
+        [benchmark_mode(mode, aligned_cases, run) for mode in SearchMode]
+        if aligned_cases
+        else skipped_rows()
+    )
     write_csv(args.report_dir / "benchmark_results.csv", rows)
-    write_markdown(args.report_dir / "benchmark_report.md", rows, len(cases))
+    write_markdown(args.report_dir / "benchmark_report.md", rows, len(cases), alignment)
     print(f"Wrote retrieval benchmark to {args.report_dir}")
     return 0
 

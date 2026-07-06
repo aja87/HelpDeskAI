@@ -5,7 +5,13 @@ from helpdeskai.observability.continuous_eval import (
     judge_answer,
     load_conversation_samples,
 )
-from helpdeskai.observability.finops import Scenario, make_optimized, recommend
+from helpdeskai.observability.finops import Scenario, make_current_poc, make_optimized, recommend
+from helpdeskai.observability.mlflow_model import (
+    DEFAULT_RAG_MODEL_EXPERIMENT,
+    DEFAULT_RAG_MODEL_NAME,
+    RagChainPyfuncModel,
+    register_rag_pyfunc_model,
+)
 from helpdeskai.observability.mlflow_tracking import (
     configure_mlflow,
     estimate_rag_cost_usd,
@@ -19,6 +25,9 @@ from helpdeskai.observability.prompt_registry import (
 
 __all__ = [
     "Scenario",
+    "DEFAULT_RAG_MODEL_EXPERIMENT",
+    "DEFAULT_RAG_MODEL_NAME",
+    "RagChainPyfuncModel",
     "configure_mlflow",
     "detect_drift",
     "estimate_rag_cost_usd",
@@ -26,8 +35,10 @@ __all__ = [
     "load_conversation_samples",
     "load_prompt_by_alias",
     "log_rag_evaluation_run",
+    "make_current_poc",
     "make_optimized",
     "promote_prompt_alias",
     "recommend",
+    "register_rag_pyfunc_model",
     "register_prompt_versions",
 ]

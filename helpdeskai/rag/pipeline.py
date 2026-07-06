@@ -55,7 +55,7 @@ def format_context(contexts: Sequence[RagContext]) -> str:
 
 
 class AdvancedRagPipeline:
-    """Phase 4 RAG pipeline composed from injectable stages."""
+    """RAG pipeline composed from injectable stages."""
 
     def __init__(
         self,

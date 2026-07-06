@@ -1,6 +1,6 @@
-# Phase 6 MCP Tools
+# MCP Tools
 
-HelpDeskAI exposes two FastMCP servers for the Phase 6 mock SI integration.
+HelpDeskAI exposes two FastMCP servers for the mock SI integration.
 Both servers use stdio by default, require a shared `token` argument, validate
 tool inputs with Pydantic, apply a per-actor sliding-window rate limit, and
 write JSON audit logs to `data/audit/mcp.jsonl` unless
@@ -54,4 +54,3 @@ Run the demo:
 ```powershell
 python scripts/demo_agent_mcp.py
 ```
-

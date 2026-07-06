@@ -1,132 +1,131 @@
 # Architecture HelpDeskAI
 
-## Architecture fonctionnelle cible V1
+## Perimetre
 
-Le schema ci-dessous presente la vision fonctionnelle de HelpDeskAI.
-Il ne detaille pas les composants techniques, mais illustre les grands roles du
-systeme : comprendre la demande, rechercher dans la base documentaire, consulter
-les outils internes simules si necessaire, repondre avec sources, demander une
-clarification ou escalader vers un humain.
+HelpDeskAI est un POC local d'assistant support N1. Le flux couvert est :
+
+```text
+ingestion -> retrieval -> RAG -> agent -> MCP -> observabilite
+```
+
+Le systeme s'execute avec `uv` pour les scripts Python et Docker Compose pour
+Qdrant, pgvector, MLflow, Langfuse et la demo Streamlit.
+
+## Vue Technique
 
 ```mermaid
 flowchart LR
-    U[Utilisateur / Agent support N1] --> A[Assistant IA HelpDeskAI]
+    User[Utilisateur support] --> Streamlit[Streamlit demo]
+    User --> AgentCLI[run_agent.py]
+    User --> RagCLI[run_rag.py]
+    User --> IndexCLI[index_retrieval.py]
 
-    A --> B[Comprehension de la demande]
-    B --> C{Type de demande}
+    Streamlit --> Agent[SupportAgent LangGraph]
+    AgentCLI --> Agent
+    RagCLI --> RAG[AdvancedRagPipeline]
 
-    C -->|Question documentee| D[Recherche dans la base de connaissances]
-    D --> E[Reponse sourcee]
+    Agent --> Classifier[classify_intent]
+    Classifier --> Planner[plan_mcp_calls]
+    Planner --> Approval[request_human_approval]
+    Planner --> Executor[execute_mcp_calls]
+    Approval --> Executor
+    Executor --> McpClient[StdioMcpClient]
+    Executor --> Answer[generate_answer]
+    Answer --> Quality[quality_check]
 
-    C -->|Demande ambigue| F[Question de clarification]
+    McpClient --> CRM[MCP CRM]
+    McpClient --> Knowledge[MCP Knowledge]
+    CRM --> CRMData[(CRM simule)]
+    Knowledge --> Search[SearchEngine]
+    RAG --> Search
 
-    C -->|Donnee client necessaire| G[Consultation des outils internes simules]
-    G --> E
+    Search --> Qdrant[(Qdrant)]
+    Search --> BM25[BM25 local]
+    Search --> Chunks[(TechQA chunks)]
+    IndexCLI --> Qdrant
+    IndexCLI --> PGVector[(pgvector)]
 
-    C -->|Cas sensible ou incertain| H[Escalade vers un agent humain]
+    RAG --> Claude[Claude]
+    Agent --> Claude
 
-    E --> U
-    F --> U
-    H --> U
-
-    A --> I[Tracabilite et suivi qualite]
-    I --> J[Evaluation des reponses]
-    I --> K[Suivi des couts et de la performance]
+    Eval[evaluate_rag.py] --> MLflow[(MLflow)]
+    ModelReg[register_rag_model.py] --> MLflow
+    Prompts[register_prompts.py] --> MLflow
+    Trace[run_agent_langfuse.py] --> Langfuse[(Langfuse)]
+    FinOps[finops_dashboard.py] --> Reports[(reports/finops)]
 ```
 
-## Statut
+## Graphe Agent
 
-Architecture cible en cours de construction par phases. Les elements ci-dessous
-documentent l'etat actuel du module d'ingestion et ses frontieres avec les
-modules suivants.
+Ce diagramme correspond aux noeuds et routes declares dans
+`helpdeskai/agents/support_agent.py`.
 
-## Contexte
+```mermaid
+flowchart TD
+    START([START]) --> classify_intent
 
-HelpDeskAI vise a assister un support N1 NovaCloud avec des reponses sourcees,
-des outils internes simules, une logique d'escalade et un suivi qualite.
+    classify_intent -->|ambiguous ou faible confiance| ask_clarification
+    classify_intent -->|chitchat| direct_answer
+    classify_intent -->|out_of_scope ou budget depasse| escalate_to_human
+    classify_intent -->|besoin outils| plan_mcp_calls
 
-## Architecture cible
+    plan_mcp_calls -->|info manquante| ask_clarification
+    plan_mcp_calls -->|action sensible| request_human_approval
+    plan_mcp_calls -->|plan pret| execute_mcp_calls
 
-Un diagramme C4 niveau 2 sera complete lorsque les composants Retrieval, RAG,
-Agents, MCP et Observabilite seront stabilises.
+    request_human_approval --> execute_mcp_calls
+    execute_mcp_calls --> generate_answer
+    generate_answer --> quality_check
+
+    quality_check -->|fiable| END([END])
+    quality_check -->|non fiable| escalate_to_human
+
+    ask_clarification --> END
+    direct_answer --> END
+    escalate_to_human --> END
+```
 
 ## Composants
 
-| Composant | Responsabilite | Technologie / statut |
+| Composant | Role | Implementation |
 | --- | --- | --- |
-| Ingestion | Pipeline modulaire `extract -> normalize -> document dedup -> enrich -> chunk recursive -> chunk dedup -> persist -> quality` applique uniquement aux documents TechQA. Il produit les documents canoniques et les chunks prets pour l'indexation. Les questions/reponses TechQA, Bitext et MSDialog restent hors pipeline. | Python, BeautifulSoup, tokenizer BGE-M3, Prefect, Evidently. Implemente dans `helpdeskai.ingestion` et expose par `scripts/prepare_corpus.py`. |
-| Analyse corpus | Analyse exploratoire des corpus bruts et comparaison independante des strategies de chunking. Ces scripts produisent des artefacts de decision, pas des donnees indexees. | Python, Pandas, Matplotlib, BGE-M3 pour le chunking semantique. Expose par `scripts/analyze_corpus.py` et `scripts/compare_chunking.py`. |
-| Retrieval | Indexation des chunks TechQA dans Qdrant et pgvector. Recherche dense via embeddings BGE-M3, recherche sparse BM25 locale, recherche hybride par Reciprocal Rank Fusion, filtres metadata produit/version/date/tenant. | Python, SentenceTransformers, Qdrant, PostgreSQL/pgvector, BM25. Implemente dans `helpdeskai.retrieval` et expose par `scripts/index_retrieval.py`, `scripts/benchmark_retrieval.py` et `helpdeskai.retrieval.search.search`. |
-| RAG | Pipeline avance `rewrite -> retrieve -> rerank -> compress -> generate`, generation Claude avec citations, trois prompts versionnes et evaluation Ragas sur le golden TechQA eligible. | Python, Anthropic Claude, BGE reranker, Ragas. Implemente dans `helpdeskai.rag` et expose par `scripts/run_rag.py` et `scripts/evaluate_rag.py`. |
-| Agent | Graphe LangGraph `classify_intent -> retrieve/generate/clarification/escalate`. Il classe l'intention metier par LLM (`technical_question`, `crm_question`, `out_of_scope`, `chitchat`, `ambiguous`), la mappe vers une route interne, orchestre le RAG existant, pose une clarification si la confiance est faible, suspend les actions sensibles avant `escalate` et applique des budgets d'execution. | Python, LangGraph, Anthropic Claude, checkpoint SQLite. Implemente dans `helpdeskai.agents.support_agent` et expose par `scripts/run_agent.py`. |
-| Serveurs MCP | A definir | A definir |
-| Observabilite | A definir | A definir |
+| Ingestion | Prepare les documents TechQA indexables. | `helpdeskai.ingestion`, `scripts/prepare_corpus.py` |
+| Retrieval | Recherche dense Qdrant, sparse BM25 et hybride par fusion. pgvector est alimente par l'indexation mais n'est pas le chemin de recherche public actuel. | `helpdeskai.retrieval`, Qdrant, BM25, pgvector |
+| RAG | Rewrite, retrieve, rerank, compress, generate. | `helpdeskai.rag`, `scripts/run_rag.py` |
+| Agent | Orchestre classification, outils MCP, HITL et qualite. | `helpdeskai.agents.support_agent` |
+| MCP CRM | Donnees client, abonnement et creation de ticket. | `helpdeskai.mcp_servers.crm` |
+| MCP Knowledge | Outil `search_knowledge` branche sur retrieval. | `helpdeskai.mcp_servers.knowledge` |
+| Demo | Chat local et validation d'action sensible. | `scripts/demo_streamlit.py` |
+| Observabilite | Evaluations, registry, traces et FinOps. | MLflow, Langfuse, `helpdeskai.observability` |
 
-## Flux de donnees
+## Flux De Donnees
 
 ```text
 scripts/download_corpus.py
-    -> data/raw/techqa/documents.jsonl
-    -> data/raw/techqa/qa.jsonl
-    -> data/raw/bitext/tickets.jsonl
-    -> data/raw/msdialog/conversations.jsonl
+    -> data/raw/
 
 scripts/prepare_corpus.py
     -> data/processed/techqa/documents.jsonl
     -> data/processed/techqa/chunks.jsonl
     -> data/processed/techqa/manifest.json
-    -> docs/corpus_preparation/corpus_quality_report.html
-    -> docs/corpus_preparation/corpus_quality_summary.json
-
-scripts/compare_chunking.py
-    -> docs/corpus_preparation/chunking_benchmark.json
-    -> docs/corpus_preparation/chunking_benchmark.md
-    -> docs/corpus_preparation/chunking_comparison.png
 
 scripts/index_retrieval.py
     -> Qdrant collection helpdeskai_techqa_chunks
     -> pgvector table retrieval_chunks
 
-helpdeskai.retrieval.search.search
-    -> dense search via Qdrant
-    -> sparse search via BM25
-    -> hybrid search via Reciprocal Rank Fusion
+MCP Knowledge search_knowledge
+    -> helpdeskai.retrieval.search.search(...)
+    -> Qdrant en dense, BM25 en sparse, Qdrant + BM25 en hybrid
 
-scripts/benchmark_retrieval.py
-    -> reports/retrieval/benchmark_results.csv
-    -> reports/retrieval/benchmark_report.md
-
-scripts/run_rag.py
-    -> query rewriting Claude
-    -> retrieval dense/sparse/hybrid
-    -> BGE reranking
-    -> contextual compression
-    -> Claude answer with [chunk_id] citations
+pgvector
+    -> alimente par scripts/index_retrieval.py
+    -> conserve comme stockage vectoriel comparatif
 
 scripts/evaluate_rag.py
-    -> reports/rag/rag_results_<prompt>.jsonl
-    -> reports/rag/ragas_results_<prompt>.csv
-    -> reports/rag/ragas_comparison.md
-    -> reports/rag/ragas_comparison.json
+    -> reports/rag/
+    -> MLflow si tracking URI configure
 
-scripts/run_agent.py
-    -> graph LangGraph support N1
-    -> checkpoint SQLite par thread_id
-    -> interruption avant action sensible
+scripts/register_rag_model.py
+    -> MLflow pyfunc model helpdeskai-rag-chain
+    -> alias production par defaut
 ```
-
-Seuls les chunks issus de `data/processed/techqa/chunks.jsonl` sont destines a
-l'indexation vectorielle. Les Q/A TechQA servent aux evaluations RAG, Bitext aux
-tests d'intention et demonstrations, MSDialog aux tests multi-tours.
-
-## Exigences non fonctionnelles
-
-- Securite : a definir.
-- Performance : a definir.
-- Disponibilite : a definir.
-- Observabilite : a definir.
-- FinOps : a definir.
-
-## Decisions d'architecture
-
-Consigner les decisions importantes dans des ADR dedies.

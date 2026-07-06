@@ -1,9 +1,13 @@
 name,requests_per_month,input_tokens,output_tokens,model,cache_ratio,haiku_ratio,compression_ratio,semantic_cache_hit,infra_usd_per_month,embedding_usd_per_month,variant,n_effective_calls,llm_cost_usd,infra_cost_usd,total_usd,cost_per_query_usd
 POC (1k req/month),1000,4000,300,claude-sonnet-4-6,0.0,0.0,0.0,0.0,40.0,2.0,baseline,1000,16.5,42.0,58.5,0.0585
+POC (1k req/month) (current POC),1000,4000,300,claude-sonnet-4-6,0.0,0.0,0.4,0.0,40.0,2.0,current_poc,1000,11.7,42.0,53.7,0.0537
 POC (1k req/month) (optimized),1000,4000,300,claude-sonnet-4-6,0.6,0.7,0.4,0.3,70.0,2.0,optimized,700,2.92,72.0,74.92,0.07492
 Small scale (10k),10000,4000,300,claude-sonnet-4-6,0.0,0.0,0.0,0.0,80.0,2.0,baseline,10000,165.0,82.0,247.0,0.0247
+Small scale (10k) (current POC),10000,4000,300,claude-sonnet-4-6,0.0,0.0,0.4,0.0,80.0,2.0,current_poc,10000,117.0,82.0,199.0,0.0199
 Small scale (10k) (optimized),10000,4000,300,claude-sonnet-4-6,0.6,0.7,0.4,0.3,110.0,2.0,optimized,7000,29.16,112.0,141.16,0.01412
 Medium scale (100k),100000,4000,300,claude-sonnet-4-6,0.0,0.0,0.0,0.0,200.0,2.0,baseline,100000,1650.0,202.0,1852.0,0.01852
+Medium scale (100k) (current POC),100000,4000,300,claude-sonnet-4-6,0.0,0.0,0.4,0.0,200.0,2.0,current_poc,100000,1170.0,202.0,1372.0,0.01372
 Medium scale (100k) (optimized),100000,4000,300,claude-sonnet-4-6,0.6,0.7,0.4,0.3,230.0,2.0,optimized,70000,291.65,232.0,523.65,0.00524
 Large scale (1M),1000000,4000,300,claude-sonnet-4-6,0.0,0.0,0.0,0.0,800.0,2.0,baseline,1000000,16500.0,802.0,17302.0,0.0173
+Large scale (1M) (current POC),1000000,4000,300,claude-sonnet-4-6,0.0,0.0,0.4,0.0,800.0,2.0,current_poc,1000000,11700.0,802.0,12502.0,0.0125
 Large scale (1M) (optimized),1000000,4000,300,claude-sonnet-4-6,0.6,0.7,0.4,0.3,830.0,2.0,optimized,700000,2916.49,832.0,3748.49,0.00375

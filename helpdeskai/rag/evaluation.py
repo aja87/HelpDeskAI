@@ -1,4 +1,4 @@
-"""Ragas evaluation utilities for Phase 4."""
+"""Ragas evaluation utilities."""
 
 from __future__ import annotations
 

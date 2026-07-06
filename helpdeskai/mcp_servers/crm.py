@@ -1,4 +1,4 @@
-"""FastMCP CRM server for HelpDeskAI Phase 6."""
+"""FastMCP CRM server for HelpDeskAI."""
 
 from __future__ import annotations
 

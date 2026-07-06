@@ -1,4 +1,4 @@
-"""Run the Phase 4 advanced RAG pipeline with Claude generation."""
+"""Run the advanced RAG pipeline with Claude generation."""
 
 from __future__ import annotations
 

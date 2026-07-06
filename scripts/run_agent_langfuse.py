@@ -21,13 +21,19 @@ from helpdeskai.mcp_servers.client import McpServerScripts, StdioMcpClient  # no
 console = Console()
 
 
+def _run_graph_values(agent: SupportAgent, state: dict | None, config: dict) -> dict:
+    last = {}
+    for event in agent.graph.stream(state, config=config, stream_mode="values"):
+        last = event
+    return last
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--question", action="append")
     parser.add_argument("--thread-id", default="langfuse-demo")
     parser.add_argument("--user-id", default="demo")
     parser.add_argument("--checkpoint-db", type=Path, default=Path("data/agent_checkpoints.sqlite"))
-    parser.add_argument("--with-mcp", action="store_true")
     parser.add_argument("--mcp-token", default="helpdeskai-dev-token")
     parser.add_argument(
         "--crm-server",
@@ -46,6 +52,7 @@ def _questions(args: argparse.Namespace) -> list[str]:
     return args.question or [
         "How do I configure SAML login in NovaCloud?",
         "Quel est le statut de cust_acme ?",
+        "Le client cust_acme peut-il configurer SAML ?",
         "Escalade le compte cust_acme pour acces admin bloque",
     ]
 
@@ -58,7 +65,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ModuleNotFoundError:
         console.print(
             "[red]error: missing optional dependency `langfuse`.[/red]\n"
-            "Install the Phase 7 dependencies first, for example:\n"
+            "Install the observability dependencies first, for example:\n"
             "  python -m ensurepip --upgrade\n"
             "  python -m pip install \"langfuse>=3\"\n"
             "or, if uv is installed:\n"
@@ -72,16 +79,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
 
     with open_sqlite_checkpointer(args.checkpoint_db) as checkpointer:
-        crm_client = None
-        if args.with_mcp:
-            crm_client = StdioMcpClient(
-                scripts=McpServerScripts(crm=args.crm_server, knowledge=args.knowledge_server),
-                token=args.mcp_token,
-            )
+        mcp_client = StdioMcpClient(
+            scripts=McpServerScripts(crm=args.crm_server, knowledge=args.knowledge_server),
+            token=args.mcp_token,
+        )
         agent = SupportAgent.create(
             config=AgentConfig(),
             checkpointer=checkpointer,
-            crm_client=crm_client,
+            mcp_client=mcp_client,
         )
         for index, question in enumerate(_questions(args), start=1):
             config = {
@@ -100,11 +105,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "tokens_used": 0,
                 "path_taken": [],
             }
-            output = agent.graph.invoke(state, config=config)
+            output = _run_graph_values(agent, state, config)
             console.print(Panel(output.get("answer", ""), title=question, border_style="cyan"))
             if output.get("pending_action"):
                 agent.graph.update_state(config, {"approval": "approved"})
-                approved = agent.graph.invoke(None, config=config)
+                approved = _run_graph_values(agent, None, config)
                 console.print(
                     Panel(
                         approved.get("answer", ""),

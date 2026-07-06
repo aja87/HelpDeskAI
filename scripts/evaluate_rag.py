@@ -1,4 +1,4 @@
-"""Evaluate Phase 4 RAG prompt variants with Ragas."""
+"""Evaluate RAG prompt variants with Ragas."""
 
 from __future__ import annotations
 

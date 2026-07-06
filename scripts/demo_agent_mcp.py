@@ -20,21 +20,21 @@ class DemoClassifier:
 
     def classify(self, question: str) -> IntentDecision:
         if self.sensitive:
-            return IntentDecision("crm_question", "sensitive_action", 0.93, sensitive=True)
-        return IntentDecision("crm_question", "crm_support", 0.91)
+            return IntentDecision("sensitive_action", 0.93, sensitive=True)
+        return IntentDecision("account_question", 0.91)
 
 
 def main() -> int:
     load_dotenv(PROJECT_ROOT / ".env")
     console = Console()
-    crm = StdioMcpClient(
+    mcp_client = StdioMcpClient(
         scripts=McpServerScripts(
             crm=PROJECT_ROOT / "helpdeskai" / "mcp_servers" / "crm.py",
             knowledge=PROJECT_ROOT / "helpdeskai" / "mcp_servers" / "knowledge.py",
         )
     )
 
-    account_agent = SupportAgent.create(intent_classifier=DemoClassifier(), crm_client=crm)
+    account_agent = SupportAgent.create(intent_classifier=DemoClassifier(), mcp_client=mcp_client)
     account = account_agent.ask("Quel est le statut du compte cust_acme ?", thread_id="mcp-account")
     console.print("[bold]Account lookup[/bold]")
     console.print(account["answer"])
@@ -43,7 +43,7 @@ def main() -> int:
     sensitive_agent = SupportAgent.create(
         intent_classifier=DemoClassifier(sensitive=True),
         checkpointer=checkpointer,
-        crm_client=crm,
+        mcp_client=mcp_client,
     )
     thread_id = "mcp-ticket"
     initial = sensitive_agent.ask(

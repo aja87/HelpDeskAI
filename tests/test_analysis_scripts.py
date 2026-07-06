@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from scripts.analyze_corpus import analyze_corpora, write_analysis
+from scripts.benchmark_retrieval import analyze_alignment, skipped_rows
 from scripts.compare_chunking import load_benchmark, write_comparison
 
 
@@ -96,5 +97,20 @@ def test_chunking_comparison_rejects_missing_metrics(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="missing columns"):
         write_comparison(dataframe, tmp_path / "comparison.png")
+
+
+def test_retrieval_benchmark_alignment_detects_missing_documents() -> None:
+    cases = [
+        {"document_id": "doc-1", "question": "q1"},
+        {"document_id": "doc-2", "question": "q2"},
+    ]
+
+    alignment = analyze_alignment(cases, {"doc-1", "doc-3"})
+
+    assert alignment["golden_cases"] == 2
+    assert alignment["aligned_cases"] == 1
+    assert alignment["missing_unique_documents"] == 1
+    assert alignment["missing_sample"] == ["doc-2"]
+    assert skipped_rows()[0]["recall@5"] == "n/a"
 
 

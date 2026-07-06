@@ -8,7 +8,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class RagConfig:
-    """Runtime configuration for Phase 4 RAG."""
+    """Runtime configuration for RAG."""
 
     generator_model: str = "claude-haiku-4-5-20251001"
     judge_model: str = "claude-sonnet-5"

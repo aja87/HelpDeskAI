@@ -1,25 +1,22 @@
----
-config:
-  flowchart:
-    curve: linear
----
-graph TD;
-	__start__([<p>__start__</p>]):::first
-	classify_intent(classify_intent)
-	retrieve(retrieve)
-	generate(generate)
-	clarification(clarification)
-	escalate(escalate<hr/><small><em>__interrupt = before</em></small>)
-	__end__([<p>__end__</p>]):::last
-	__start__ --> classify_intent;
-	classify_intent -.-> clarification;
-	classify_intent -.-> escalate;
-	classify_intent -.-> generate;
-	classify_intent -.-> retrieve;
-	retrieve --> generate;
-	clarification --> __end__;
-	escalate --> __end__;
-	generate --> __end__;
-	classDef default fill:#f2f0ff,line-height:1.2
-	classDef first fill-opacity:0
-	classDef last fill:#bfb6fc
+flowchart TD
+    START([START]) --> classify_intent
+
+    classify_intent -->|ambiguous ou faible confiance| ask_clarification
+    classify_intent -->|chitchat| direct_answer
+    classify_intent -->|out_of_scope ou budget depasse| escalate_to_human
+    classify_intent -->|besoin outils| plan_mcp_calls
+
+    plan_mcp_calls -->|info manquante| ask_clarification
+    plan_mcp_calls -->|action sensible| request_human_approval
+    plan_mcp_calls -->|plan pret| execute_mcp_calls
+
+    request_human_approval --> execute_mcp_calls
+    execute_mcp_calls --> generate_answer
+    generate_answer --> quality_check
+
+    quality_check -->|fiable| END([END])
+    quality_check -->|non fiable| escalate_to_human
+
+    ask_clarification --> END
+    direct_answer --> END
+    escalate_to_human --> END

@@ -148,5 +148,5 @@ def search(
     filters: SearchFilters | None = None,
     mode: SearchMode | str = SearchMode.HYBRID,
 ) -> list[SearchResult]:
-    """Public retrieval function required by Phase 3."""
+    """Public retrieval function."""
     return _default_engine().search(query, top_k=top_k, filters=filters, mode=mode)

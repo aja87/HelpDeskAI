@@ -107,6 +107,24 @@ class StdioMcpClient:
     def list_recent_tickets(self, customer_id: str, limit: int = 5) -> dict[str, Any]:
         return self.call_tool("list_recent_tickets", customer_id=customer_id, limit=limit)
 
+    def search_knowledge(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        product: str | None = None,
+        version: str | None = None,
+        tenant: str | None = None,
+    ) -> dict[str, Any]:
+        return self.call_tool(
+            "search_knowledge",
+            query=query,
+            top_k=top_k,
+            product=product,
+            version=version,
+            tenant=tenant,
+        )
+
     def create_ticket(
         self,
         *,

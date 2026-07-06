@@ -1,4 +1,4 @@
-"""Versioned prompt variants for Phase 4 RAG."""
+"""Versioned prompt variants for RAG."""
 
 from __future__ import annotations
 

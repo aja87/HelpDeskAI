@@ -1,0 +1,16 @@
+.git
+.github
+.pytest_cache
+.ruff_cache
+.venv
+__pycache__
+*.py[cod]
+.coverage
+htmlcov
+mlruns
+data
+.env
+helpdeskai/rag/.env
+scripts/.env
+docs/corpus_preparation
+reports

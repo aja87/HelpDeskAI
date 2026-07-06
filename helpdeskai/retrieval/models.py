@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -31,12 +32,28 @@ class SearchFilters:
 class RetrievalConfig:
     """Runtime configuration for retrieval services."""
 
-    collection_name: str = "helpdeskai_techqa_chunks"
-    qdrant_url: str = "http://localhost:6333"
-    pgvector_dsn: str = "postgresql://postgres:postgres@localhost:5433/helpdeskai"
+    collection_name: str = field(
+        default_factory=lambda: os.environ.get(
+            "HELPDESKAI_QDRANT_COLLECTION",
+            "helpdeskai_techqa_chunks",
+        )
+    )
+    qdrant_url: str = field(default_factory=lambda: os.environ.get("QDRANT_URL", "http://localhost:6333"))
+    pgvector_dsn: str = field(
+        default_factory=lambda: os.environ.get(
+            "PGVECTOR_DSN",
+            "postgresql://postgres:postgres@localhost:5433/helpdeskai",
+        )
+    )
     pgvector_table: str = "retrieval_chunks"
-    model_name: str = "BAAI/bge-m3"
-    corpus_path: Path = Path("data/processed/techqa/chunks.jsonl")
+    model_name: str = field(
+        default_factory=lambda: os.environ.get("HELPDESKAI_EMBEDDING_MODEL", "BAAI/bge-m3")
+    )
+    corpus_path: Path = field(
+        default_factory=lambda: Path(
+            os.environ.get("HELPDESKAI_CORPUS_PATH", "data/processed/techqa/chunks.jsonl")
+        )
+    )
     batch_size: int = 64
     rrf_k: int = 60
 
