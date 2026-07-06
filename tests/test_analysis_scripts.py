@@ -8,7 +8,14 @@ import pytest
 
 from scripts.analyze_corpus import analyze_corpora, write_analysis
 from scripts.benchmark_retrieval import analyze_alignment, skipped_rows
-from scripts.compare_chunking import load_benchmark, write_comparison
+from scripts.compare_chunking import (
+    HashingSemanticEmbedder,
+    build_semantic_embedder,
+    build_tokenizer,
+    load_benchmark,
+    write_comparison,
+)
+from scripts.generate_corpus_quality_report import generate_report
 
 
 def write_jsonl(path: Path, records: list[dict]) -> None:
@@ -97,6 +104,69 @@ def test_chunking_comparison_rejects_missing_metrics(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="missing columns"):
         write_comparison(dataframe, tmp_path / "comparison.png")
+
+
+def test_chunking_comparison_auto_uses_hashing_fallback(monkeypatch) -> None:
+    def fail_bge_m3():
+        raise RuntimeError("not enough memory")
+
+    monkeypatch.setattr("scripts.compare_chunking.BgeM3Embedder", fail_bge_m3)
+
+    embedder = build_semantic_embedder("auto")
+
+    assert isinstance(embedder, HashingSemanticEmbedder)
+
+
+def test_chunking_comparison_supports_whitespace_tokenizer() -> None:
+    tokenizer = build_tokenizer("whitespace")
+
+    assert tokenizer.name == "whitespace-v1"
+
+
+def test_generate_corpus_quality_report_from_existing_chunks(monkeypatch, tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    write_jsonl(
+        processed / "documents.jsonl",
+        [{"document_id": "doc-1", "text": "Document"}],
+    )
+    write_jsonl(
+        processed / "chunks.jsonl",
+        [
+            {
+                "chunk_id": "doc-1#0000",
+                "document_id": "doc-1",
+                "content": "Useful content",
+                "content_hash": "hash-1",
+                "token_count": 2,
+                "metadata": {
+                    "category": {"value": "faq"},
+                    "product": {"value": "NovaCloud"},
+                    "versions": {"value": ["1.0"]},
+                    "date": {"value": "2024-01-01"},
+                },
+            }
+        ],
+    )
+
+    def fake_evidently_report(chunks, output_path):
+        output_path.write_text("<html>Evidently fixture</html>", encoding="utf-8")
+        return output_path
+
+    monkeypatch.setattr(
+        "scripts.generate_corpus_quality_report.generate_evidently_report",
+        fake_evidently_report,
+    )
+
+    report, summary = generate_report(
+        processed_dir=processed,
+        report_path=tmp_path / "docs" / "corpus_quality_report.html",
+        summary_path=tmp_path / "docs" / "corpus_quality_summary.json",
+    )
+
+    assert report.read_text(encoding="utf-8").startswith("<html>")
+    payload = json.loads(summary.read_text(encoding="utf-8"))
+    assert payload["chunks"] == 1
+    assert payload["validated_documents"] == 1
 
 
 def test_retrieval_benchmark_alignment_detects_missing_documents() -> None:

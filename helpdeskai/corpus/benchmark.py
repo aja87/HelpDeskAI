@@ -73,18 +73,32 @@ def write_benchmark(path: Path, benchmark: dict) -> tuple[Path, Path]:
         json.dumps(benchmark, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    sample = benchmark.get("sample") or {}
+    sample_size = sample.get("documents", len(benchmark.get("sample_document_ids", [])))
+    seed = sample.get("seed", 42)
     lines = [
         "# Chunking benchmark",
         "",
-        "Deterministic comparison on 50 TechQA documents (seed 42).",
+        f"Deterministic comparison on {sample_size} TechQA documents (seed {seed}).",
         "",
-        "Recursive chunking is the default publication strategy unless benchmark evidence "
-        "supports semantic chunking.",
-        "",
-        "| Strategy | Chunks | Mean tokens | Median | Min | Max | Duplicates | "
-        "Runtime (s) |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+,
     ]
+    if benchmark.get("semantic_embedder"):
+        lines.extend(["Semantic embedder: " + str(benchmark["semantic_embedder"]), ""])
+    if benchmark.get("tokenizer"):
+        lines.extend(["Tokenizer: " + str(benchmark["tokenizer"]), ""])
+    if benchmark.get("selected_strategy"):
+        lines.extend(["Selected strategy: " + str(benchmark["selected_strategy"]), ""])
+    if benchmark.get("justification"):
+        lines.extend(["Justification: " + str(benchmark["justification"]), ""])
+
+    lines.extend(
+        [
+            "| Strategy | Chunks | Mean tokens | Median | Min | Max | Duplicates | "
+            "Runtime (s) |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
     for name, metrics in benchmark["strategies"].items():
         lines.append(
             f"| {name} | {metrics['chunks']} | {metrics['mean_tokens']} | "
