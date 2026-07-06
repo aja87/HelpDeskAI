@@ -70,42 +70,48 @@ def main() -> None:
     _load_env_file(Path(".env"))
     args = parse_args()
     init_logging(log_file=LOG_FILE)
+    logging.info("MCP entrypoint starting with action=%s", args.action)
+    if args.action == "ask":
+        logging.info("MCP ask params: customer_id=%s top_k=%s chunks_path=%s", args.customer_id, args.top_k, args.chunks_path)
+    try:
+        if args.action == "serve-crm":
+            logging.info("Starting CRM MCP server")
+            run_crm_server()
+            return
 
-    if args.action == "serve-crm":
-        logging.info("Starting CRM MCP server")
-        run_crm_server()
-        return
+        if args.action == "serve-knowledge":
+            logging.info("Starting Knowledge MCP server")
+            run_knowledge_server()
+            return
 
-    if args.action == "serve-knowledge":
-        logging.info("Starting Knowledge MCP server")
-        run_knowledge_server()
-        return
+        token = _resolve_token(args.token)
 
-    token = _resolve_token(args.token)
+        if args.action == "describe-tools":
+            payload = {
+                "crm": CRMService.describe_tools(),
+                "knowledge": KnowledgeService.describe_tools(),
+            }
+            print(_json_dump(payload, pretty=args.pretty))
+            return
 
-    if args.action == "describe-tools":
-        payload = {
-            "crm": CRMService.describe_tools(),
-            "knowledge": KnowledgeService.describe_tools(),
-        }
+        if not args.query:
+            raise ValueError("--query is required when action=ask")
+
+        crm_service = CRMService(expected_token=token)
+        knowledge_service = KnowledgeService(chunks_path=args.chunks_path, expected_token=token)
+        payload = run_mcp_agent_core(
+            query=args.query,
+            token=token,
+            customer_id=args.customer_id,
+            top_k=args.top_k,
+            crm_service=crm_service,
+            knowledge_service=knowledge_service,
+        )
+        logging.info("MCP orchestration path: %s", payload.get("path_taken"))
         print(_json_dump(payload, pretty=args.pretty))
-        return
-
-    if not args.query:
-        raise ValueError("--query is required when action=ask")
-
-    crm_service = CRMService(expected_token=token)
-    knowledge_service = KnowledgeService(chunks_path=args.chunks_path, expected_token=token)
-    payload = run_mcp_agent_core(
-        query=args.query,
-        token=token,
-        customer_id=args.customer_id,
-        top_k=args.top_k,
-        crm_service=crm_service,
-        knowledge_service=knowledge_service,
-    )
-    logging.info("MCP orchestration path: %s", payload.get("path_taken"))
-    print(_json_dump(payload, pretty=args.pretty))
+    except Exception:
+        logging.exception("MCP run failed for action=%s", args.action)
+        raise
 
 
 if __name__ == "__main__":

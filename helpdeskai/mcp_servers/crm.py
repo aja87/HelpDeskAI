@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
 from collections import defaultdict, deque
@@ -243,6 +244,7 @@ def _build_mcp_app(service: CRMService):
 	try:
 		from mcp.server.fastmcp import FastMCP  # pyright: ignore[reportMissingImports]
 	except Exception as exc:  # pragma: no cover
+		logging.exception("Failed to import FastMCP for CRM server")
 		raise RuntimeError("mcp package is required to run the CRM MCP server") from exc
 
 	mcp = FastMCP("crm-server")
@@ -281,8 +283,11 @@ def _build_mcp_app(service: CRMService):
 
 
 def run_server() -> None:
+	logging.info("Initializing CRM service")
 	service = CRMService()
+	logging.info("CRM service ready: customers=%d tickets=%d", len(service.customers), len(service.tickets))
 	app = _build_mcp_app(service)
+	logging.info("CRM MCP server bootstrapped; entering FastMCP run loop")
 	app.run()
 
 

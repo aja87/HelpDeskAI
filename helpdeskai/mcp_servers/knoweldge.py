@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
 from collections import defaultdict, deque
@@ -209,6 +210,7 @@ def _build_mcp_app(service: KnowledgeService):
 	try:
 		from mcp.server.fastmcp import FastMCP  # pyright: ignore[reportMissingImports]
 	except Exception as exc:  # pragma: no cover
+		logging.exception("Failed to import FastMCP for Knowledge server")
 		raise RuntimeError("mcp package is required to run the Knowledge MCP server") from exc
 
 	mcp = FastMCP("knowledge-server")
@@ -243,8 +245,11 @@ def _build_mcp_app(service: KnowledgeService):
 
 
 def run_server() -> None:
+	logging.info("Initializing Knowledge service")
 	service = KnowledgeService()
+	logging.info("Knowledge service ready: chunks=%d", len(service.chunks))
 	app = _build_mcp_app(service)
+	logging.info("Knowledge MCP server bootstrapped; entering FastMCP run loop")
 	app.run()
 
 

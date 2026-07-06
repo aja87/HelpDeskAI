@@ -51,22 +51,54 @@ services:
       - mlflow
 
   crm-mcp:
-    image: python:3.11-slim
+    image: python:3.13-slim
     profiles: ["mcp"]
     working_dir: /app
-    command: sh -c "pip install -e . && python scripts/run_mcp.py serve-crm"
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p logs
+        if [ ! -e /usr/bin/python3.13 ] && [ -x /usr/local/bin/python3.13 ]; then
+          ln -s /usr/local/bin/python3.13 /usr/bin/python3.13
+        fi
+        if [ ! -x /app/.venv/bin/python ]; then
+          echo 'ERROR: /app/.venv/bin/python is not executable inside container' | tee -a logs/mcp.log
+          ls -la /app/.venv/bin 2>&1 | tee -a logs/mcp.log
+          exit 1
+        fi
+        /app/.venv/bin/python -V 2>&1 | tee -a logs/mcp.log
+        /app/.venv/bin/python scripts/run_mcp.py serve-crm 2>&1 | tee -a logs/mcp.log
     environment:
       HELPDESKAI_MCP_TOKEN: ${HELPDESKAI_MCP_TOKEN:-dev-token-unsafe}
+      PYTHONPATH: /app
+      PATH: /app/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     volumes:
       - .:/app
 
   knowledge-mcp:
-    image: python:3.11-slim
+    image: python:3.13-slim
     profiles: ["mcp"]
     working_dir: /app
-    command: sh -c "pip install -e . && python scripts/run_mcp.py serve-knowledge"
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p logs
+        if [ ! -e /usr/bin/python3.13 ] && [ -x /usr/local/bin/python3.13 ]; then
+          ln -s /usr/local/bin/python3.13 /usr/bin/python3.13
+        fi
+        if [ ! -x /app/.venv/bin/python ]; then
+          echo 'ERROR: /app/.venv/bin/python is not executable inside container' | tee -a logs/mcp.log
+          ls -la /app/.venv/bin 2>&1 | tee -a logs/mcp.log
+          exit 1
+        fi
+        /app/.venv/bin/python -V 2>&1 | tee -a logs/mcp.log
+        /app/.venv/bin/python scripts/run_mcp.py serve-knowledge 2>&1 | tee -a logs/mcp.log
     environment:
       HELPDESKAI_MCP_TOKEN: ${HELPDESKAI_MCP_TOKEN:-dev-token-unsafe}
+      PYTHONPATH: /app
+      PATH: /app/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     volumes:
       - .:/app
     depends_on:
