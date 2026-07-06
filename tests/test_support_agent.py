@@ -9,6 +9,7 @@ from helpdeskai.agents.support_agent import (
     SupportAgent,
     build_support_graph,
 )
+from helpdeskai.rag.llm import TransientLlmError
 
 
 class FakeClassifier:
@@ -144,6 +145,11 @@ class FakeLlm:
         return "Configure SAML from the admin console [chunk-1]"
 
 
+class OverloadedLlm:
+    def complete(self, prompt: str, *, model: str, max_tokens: int, temperature: float) -> str:
+        raise TransientLlmError("LLM provider temporarily unavailable after retries.")
+
+
 def test_technical_question_plans_executes_knowledge_mcp_and_generates() -> None:
     mcp = FakeMcp()
     llm = FakeLlm()
@@ -265,7 +271,8 @@ def test_chitchat_and_out_of_scope_do_not_plan_tools() -> None:
     assert chitchat["tool_plan"] == []
     assert chitchat["path_taken"] == ["classify_intent", "direct_answer"]
     assert out_of_scope["tool_plan"] == []
-    assert out_of_scope["path_taken"] == ["classify_intent", "escalate_to_human"]
+    assert out_of_scope["path_taken"] == ["classify_intent", "direct_answer"]
+    assert "support technique NovaCloud" in out_of_scope["answer"]
 
 
 def test_budget_exceeded_escalates_without_tool_planning() -> None:
@@ -408,6 +415,23 @@ def test_mcp_failure_fails_quality_and_escalates() -> None:
     assert state["quality_reason"] == "answer_not_reliable_enough"
     assert state["path_taken"][-1] == "escalate_to_human"
     assert "Knowledge MCP" in state["answer"]
+
+
+def test_transient_llm_error_escalates_after_retrieval() -> None:
+    graph = build_support_graph(
+        intent_classifier=FakeClassifier("technical_question"),
+        mcp_client=FakeMcp(),
+        llm=OverloadedLlm(),
+        interrupt_sensitive_actions=False,
+    )
+
+    state = graph.invoke({"question": "How do I configure SAML?", "path_taken": []})
+
+    assert state["sources"] == ["chunk-1"]
+    assert state["llm_error"] == "transient_unavailable"
+    assert state["quality_passed"] is False
+    assert state["path_taken"][-1] == "escalate_to_human"
+    assert "temporairement surcharge" in state["answer"]
 
 
 def test_support_agent_wrapper_uses_stream_values_and_exports_mermaid() -> None:

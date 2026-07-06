@@ -13,7 +13,7 @@ from typing import Any, Literal, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from helpdeskai.rag.llm import ClaudeLlm, RagLlm
+from helpdeskai.rag.llm import ClaudeLlm, RagLlm, TransientLlmError
 from helpdeskai.rag.models import RagConfig
 from helpdeskai.rag.prompts import get_prompt_variant
 
@@ -155,6 +155,7 @@ class SupportAgentState(TypedDict, total=False):
     clarification_needed: bool
     quality_passed: bool
     quality_reason: str
+    llm_error: str | None
     iterations: int
     tokens_used: int
     budget_exceeded: bool
@@ -216,7 +217,7 @@ def _route_for_intent(intent: str) -> str:
     if intent == "chitchat":
         return "direct_answer"
     if intent == "out_of_scope":
-        return "escalate_to_human"
+        return "direct_answer"
     if intent == "sensitive_action":
         return "tool_backed"
     return "tool_backed"
@@ -479,6 +480,7 @@ def build_support_graph(
             "answer": "",
             "quality_passed": False,
             "quality_reason": "",
+            "llm_error": None,
             "intent_override": None,
         }
         if exceeded:
@@ -499,7 +501,12 @@ def build_support_graph(
         }
 
     def direct_answer(state: SupportAgentState) -> dict[str, Any]:
-        if state.get("route") == "direct_answer" or state.get("intent") == "chitchat":
+        if state.get("intent") == "out_of_scope":
+            answer = (
+                "Je traite uniquement les demandes de support technique NovaCloud, "
+                "les questions documentaires et les informations de compte client."
+            )
+        elif state.get("route") == "direct_answer" or state.get("intent") == "chitchat":
             answer = "Bonjour, je peux vous aider sur les questions support technique."
         else:
             answer = state.get("answer", "")
@@ -696,21 +703,35 @@ def build_support_graph(
         elif any(result["tool"] == "create_ticket" for result in tool_results):
             answer = _format_ticket_answer(state.get("action_result"))
         elif state.get("account_context") and state.get("knowledge_contexts"):
-            answer = _generate_grounded_answer(
-                question=state.get("question", ""),
-                contexts=state.get("knowledge_contexts", []),
-                account_context=state.get("account_context"),
-                llm=_llm(),
-                rag_config=rag_config,
-            )
+            try:
+                answer = _generate_grounded_answer(
+                    question=state.get("question", ""),
+                    contexts=state.get("knowledge_contexts", []),
+                    account_context=state.get("account_context"),
+                    llm=_llm(),
+                    rag_config=rag_config,
+                )
+            except TransientLlmError:
+                answer = _format_transient_llm_answer()
+                return _append_path(state, "generate_answer", answer) | {
+                    "answer": answer,
+                    "llm_error": "transient_unavailable",
+                }
         elif state.get("knowledge_contexts"):
-            answer = _generate_grounded_answer(
-                question=state.get("question", ""),
-                contexts=state.get("knowledge_contexts", []),
-                account_context=None,
-                llm=_llm(),
-                rag_config=rag_config,
-            )
+            try:
+                answer = _generate_grounded_answer(
+                    question=state.get("question", ""),
+                    contexts=state.get("knowledge_contexts", []),
+                    account_context=None,
+                    llm=_llm(),
+                    rag_config=rag_config,
+                )
+            except TransientLlmError:
+                answer = _format_transient_llm_answer()
+                return _append_path(state, "generate_answer", answer) | {
+                    "answer": answer,
+                    "llm_error": "transient_unavailable",
+                }
         elif state.get("account_context"):
             answer = _format_account_answer(state["account_context"] or {})
         else:
@@ -723,6 +744,7 @@ def build_support_graph(
             call["tool"] == "search_knowledge" for call in state.get("tool_plan", [])
         )
         has_error = any(result.get("error") for result in state.get("tool_results", []))
+        has_error = has_error or bool(state.get("llm_error"))
         passed = bool(answer) and not has_error
         if needs_sources:
             passed = passed and bool(state.get("sources"))
@@ -810,6 +832,14 @@ def _format_failed_tool_answer(result: ToolResult) -> str:
     return f"Le Knowledge MCP a retourne une erreur: {error}."
 
 
+def _format_transient_llm_answer() -> str:
+    return (
+        "Le service LLM est temporairement surcharge. Les sources ont ete recuperees, "
+        "mais la generation de la reponse n'a pas abouti. Je transmets la demande a un "
+        "agent humain avec le contexte disponible."
+    )
+
+
 def _format_ticket_answer(action_result: Any) -> str:
     if not isinstance(action_result, dict):
         return str(action_result or "Action executee.")
@@ -893,6 +923,20 @@ class SupportAgent:
         )
         return cls(graph)
 
+    @staticmethod
+    def _graph_config(
+        thread_id: str,
+        *,
+        callbacks: Sequence[Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+        if callbacks:
+            config["callbacks"] = list(callbacks)
+        if metadata:
+            config["metadata"] = metadata
+        return config
+
     def _resolve_clarification_reply(
         self,
         question: str,
@@ -916,8 +960,15 @@ class SupportAgent:
             return question, None
         return f"{original_question}\nIdentifiant client: {customer_id}", previous_intent
 
-    def ask(self, question: str, *, thread_id: str = "default") -> dict[str, Any]:
-        config = {"configurable": {"thread_id": thread_id}}
+    def ask(
+        self,
+        question: str,
+        *,
+        thread_id: str = "default",
+        callbacks: Sequence[Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        config = self._graph_config(thread_id, callbacks=callbacks, metadata=metadata)
         resolved_question, intent_override = self._resolve_clarification_reply(
             question,
             config=config,
@@ -949,13 +1000,25 @@ class SupportAgent:
             config=config,
         )
 
-    def approve(self, *, thread_id: str = "default") -> dict[str, Any]:
-        config = {"configurable": {"thread_id": thread_id}}
+    def approve(
+        self,
+        *,
+        thread_id: str = "default",
+        callbacks: Sequence[Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        config = self._graph_config(thread_id, callbacks=callbacks, metadata=metadata)
         self.graph.update_state(config, {"approval": "approved"})
         return _run_graph_values(self.graph, None, config=config)
 
-    def reject(self, *, thread_id: str = "default") -> dict[str, Any]:
-        config = {"configurable": {"thread_id": thread_id}}
+    def reject(
+        self,
+        *,
+        thread_id: str = "default",
+        callbacks: Sequence[Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        config = self._graph_config(thread_id, callbacks=callbacks, metadata=metadata)
         self.graph.update_state(config, {"approval": "rejected"})
         return _run_graph_values(self.graph, None, config=config)
 

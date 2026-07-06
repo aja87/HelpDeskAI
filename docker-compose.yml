@@ -7,6 +7,8 @@ x-helpdeskai-env: &helpdeskai-env
     PGVECTOR_DSN: postgresql://postgres:postgres@pgvector:5432/helpdeskai
     MLFLOW_TRACKING_URI: http://mlflow:5000
     LANGFUSE_HOST: http://langfuse-web:3000
+    LANGFUSE_BASE_URL: http://langfuse-web:3000
+    HELPDESKAI_LANGFUSE_PUBLIC_URL: http://localhost:3000
     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
     LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}

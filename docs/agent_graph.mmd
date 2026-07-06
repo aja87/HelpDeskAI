@@ -2,8 +2,8 @@ flowchart TD
     START([START]) --> classify_intent
 
     classify_intent -->|ambiguous ou faible confiance| ask_clarification
-    classify_intent -->|chitchat| direct_answer
-    classify_intent -->|out_of_scope ou budget depasse| escalate_to_human
+    classify_intent -->|chitchat ou out_of_scope| direct_answer
+    classify_intent -->|budget depasse| escalate_to_human
     classify_intent -->|besoin outils| plan_mcp_calls
 
     plan_mcp_calls -->|info manquante| ask_clarification

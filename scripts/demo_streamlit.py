@@ -35,6 +35,21 @@ def _load_dotenv() -> None:
     load_dotenv(PROJECT_ROOT / ".env")
 
 
+def _langfuse_internal_host() -> str | None:
+    host = os.environ.get("LANGFUSE_HOST") or os.environ.get("LANGFUSE_BASE_URL")
+    return host.rstrip("/") if host else None
+
+
+def _normalize_langfuse_env() -> None:
+    host = _langfuse_internal_host()
+    if not host:
+        return
+    if os.environ.get("LANGFUSE_HOST"):
+        host = os.environ["LANGFUSE_HOST"].rstrip("/")
+    os.environ["LANGFUSE_HOST"] = host
+    os.environ["LANGFUSE_BASE_URL"] = host
+
+
 def _env_status(name: str) -> str:
     return "configured" if os.environ.get(name) else "missing"
 
@@ -45,6 +60,72 @@ def _new_thread() -> str:
 
 def _checkpoint_db_path() -> Path:
     return Path(os.environ.get("HELPDESKAI_CHECKPOINT_DB", DEFAULT_CHECKPOINT_DB))
+
+
+def _langfuse_configured() -> bool:
+    return bool(
+        os.environ.get("LANGFUSE_PUBLIC_KEY")
+        and os.environ.get("LANGFUSE_SECRET_KEY")
+        and _langfuse_internal_host()
+    )
+
+
+def _langfuse_handler() -> Any | None:
+    if not _langfuse_configured():
+        return None
+    try:
+        from langfuse.langchain import CallbackHandler
+    except ModuleNotFoundError:
+        return None
+    return CallbackHandler()
+
+
+def _langfuse_metadata() -> dict[str, str]:
+    state = st.session_state.demo_state
+    return {
+        "langfuse_session_id": state["langfuse_session_id"],
+        "langfuse_user_id": "streamlit_demo",
+    }
+
+
+def _public_langfuse_host() -> str:
+    return os.environ.get("HELPDESKAI_LANGFUSE_PUBLIC_URL", "http://localhost:3000").rstrip("/")
+
+
+def _langfuse_trace_url(trace_id: str) -> str | None:
+    try:
+        from langfuse import get_client
+    except ModuleNotFoundError:
+        return None
+    trace_url = get_client().get_trace_url(trace_id=trace_id)
+    if not trace_url:
+        return None
+    internal_host = _langfuse_internal_host() or ""
+    if internal_host and trace_url.startswith(internal_host):
+        return _public_langfuse_host() + trace_url[len(internal_host) :]
+    return trace_url
+
+
+def _flush_langfuse(handler: Any | None) -> None:
+    flush = getattr(handler, "flush", None)
+    if callable(flush):
+        flush()
+    if handler is None:
+        return
+    try:
+        from langfuse import get_client
+    except ModuleNotFoundError:
+        return
+    get_client().flush()
+
+
+def _remember_langfuse_trace(handler: Any | None) -> None:
+    trace_id = getattr(handler, "last_trace_id", None)
+    if trace_id:
+        st.session_state.demo_state["last_langfuse_trace_id"] = str(trace_id)
+        st.session_state.demo_state["last_langfuse_trace_url"] = _langfuse_trace_url(
+            str(trace_id)
+        )
 
 
 def _mcp_server_urls() -> McpServerUrls | None:
@@ -60,6 +141,9 @@ def _initial_state() -> dict[str, Any]:
         "messages": [],
         "last_state": None,
         "thread_id": _new_thread(),
+        "langfuse_session_id": f"streamlit-{uuid.uuid4().hex}",
+        "last_langfuse_trace_id": None,
+        "last_langfuse_trace_url": None,
         "mcp_token": os.environ.get("HELPDESKAI_MCP_TOKEN", DEFAULT_TOKEN),
     }
 
@@ -93,20 +177,39 @@ def _build_agent(*, token: str) -> tuple[SupportAgent, Any]:
 def _run_agent(question: str) -> dict[str, Any]:
     state = st.session_state.demo_state
     agent, context = _build_agent(token=state["mcp_token"])
+    handler = _langfuse_handler()
     try:
-        return agent.ask(question, thread_id=state["thread_id"])
+        return agent.ask(
+            question,
+            thread_id=state["thread_id"],
+            callbacks=[handler] if handler else None,
+            metadata=_langfuse_metadata() if handler else None,
+        )
     finally:
+        _remember_langfuse_trace(handler)
+        _flush_langfuse(handler)
         context.__exit__(None, None, None)
 
 
 def _resume_agent(approval: str) -> dict[str, Any]:
     state = st.session_state.demo_state
     agent, context = _build_agent(token=state["mcp_token"])
+    handler = _langfuse_handler()
     try:
         if approval == "approved":
-            return agent.approve(thread_id=state["thread_id"])
-        return agent.reject(thread_id=state["thread_id"])
+            return agent.approve(
+                thread_id=state["thread_id"],
+                callbacks=[handler] if handler else None,
+                metadata=_langfuse_metadata() if handler else None,
+            )
+        return agent.reject(
+            thread_id=state["thread_id"],
+            callbacks=[handler] if handler else None,
+            metadata=_langfuse_metadata() if handler else None,
+        )
     finally:
+        _remember_langfuse_trace(handler)
+        _flush_langfuse(handler)
         context.__exit__(None, None, None)
 
 
@@ -138,10 +241,14 @@ def _render_sidebar() -> None:
         st.subheader("Observabilite")
         st.link_button("Langfuse traces", "http://localhost:3000", use_container_width=True)
         st.link_button("MLflow tracking", "http://127.0.0.1:5000", use_container_width=True)
-        st.caption(
-            "Les traces Langfuse apparaissent si les cles sont configurees "
-            "et que la demo tracee est lancee."
-        )
+        st.caption(f"Langfuse tracing: {'actif' if _langfuse_configured() else 'inactif'}")
+        trace_id = state.get("last_langfuse_trace_id")
+        if trace_id:
+            trace_url = state.get("last_langfuse_trace_url")
+            if trace_url:
+                st.link_button("Derniere trace", trace_url, use_container_width=True)
+            st.caption("Derniere trace Langfuse")
+            st.code(str(trace_id), language=None)
 
         st.divider()
         st.subheader("Environment")
@@ -151,6 +258,7 @@ def _render_sidebar() -> None:
                     f"ANTHROPIC_API_KEY: {_env_status('ANTHROPIC_API_KEY')}",
                     f"LANGFUSE_PUBLIC_KEY: {_env_status('LANGFUSE_PUBLIC_KEY')}",
                     f"LANGFUSE_SECRET_KEY: {_env_status('LANGFUSE_SECRET_KEY')}",
+                    f"LANGFUSE_HOST: {os.environ.get('LANGFUSE_HOST', 'not set')}",
                     f"MLFLOW_TRACKING_URI: {os.environ.get('MLFLOW_TRACKING_URI', 'not set')}",
                 ]
             )
@@ -202,8 +310,15 @@ def _render_approval_controls() -> None:
 def main() -> None:
     st.set_page_config(page_title="HelpDeskAI POC", page_icon="H", layout="wide")
     _load_dotenv()
+    _normalize_langfuse_env()
     if "demo_state" not in st.session_state:
         st.session_state.demo_state = _initial_state()
+    elif "langfuse_session_id" not in st.session_state.demo_state:
+        st.session_state.demo_state["langfuse_session_id"] = f"streamlit-{uuid.uuid4().hex}"
+    if "last_langfuse_trace_id" not in st.session_state.demo_state:
+        st.session_state.demo_state["last_langfuse_trace_id"] = None
+    if "last_langfuse_trace_url" not in st.session_state.demo_state:
+        st.session_state.demo_state["last_langfuse_trace_url"] = None
 
     _render_sidebar()
 
