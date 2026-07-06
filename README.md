@@ -1,6 +1,6 @@
 # HelpDeskAI
 
-[![CI](https://github.com/aja87/HelpDeskAI/actions/workflows/ci.yml/badge.svg)](https://github.com/aja87/HelpDeskAI/actions/workflows/ci.yml)
+[![CI](https://github.com/aja87/HelpDeskAI/actions/workflows/ci.yml/badge.svg?branch=aja)](https://github.com/aja87/HelpDeskAI/actions/workflows/ci.yml?query=branch%3Aaja)
 
 HelpDeskAI est un assistant local de support N1 pour le contexte fictif
 NovaCloud. Il combine retrieval, RAG, agent LangGraph, outils MCP CRM/Knowledge
