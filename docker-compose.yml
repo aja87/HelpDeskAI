@@ -1,6 +1,31 @@
+x-helpdeskai-env: &helpdeskai-env
+    PYTHONPATH: /app
+    UV_PROJECT_ENVIRONMENT: /opt/venv
+    HELPDESKAI_MCP_TOKEN: ${HELPDESKAI_MCP_TOKEN:-helpdeskai-dev-token}
+    HELPDESKAI_MCP_HOST: ${HELPDESKAI_MCP_HOST:-127.0.0.1}
+    QDRANT_URL: http://qdrant:6333
+    PGVECTOR_DSN: postgresql://postgres:postgres@pgvector:5432/helpdeskai
+    MLFLOW_TRACKING_URI: http://mlflow:5000
+    LANGFUSE_HOST: http://langfuse-web:3000
+    LANGFUSE_BASE_URL: http://langfuse-web:3000
+    HELPDESKAI_LANGFUSE_PUBLIC_URL: http://localhost:3000
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+    LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+
+x-helpdeskai-python: &helpdeskai-python
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: helpdeskai:local
+  working_dir: /app
+  volumes:
+    - .:/app
+  environment: *helpdeskai-env
+
 services:
   qdrant:
-    image: qdrant/qdrant:v1.12.6
+    image: qdrant/qdrant:v1.18.0
     ports:
       - "6333:6333"
       - "6334:6334"
@@ -15,43 +40,180 @@ services:
     volumes:
       - mlflow_data:/mlflow
 
-  langfuse:
-    image: langfuse/langfuse:2
-    profiles: ["observability"]
+  langfuse-web:
+    image: langfuse/langfuse:3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     ports:
       - "3000:3000"
-    environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/langfuse
-      NEXTAUTH_SECRET: change-me
-      SALT: change-me
+    environment: &langfuse-env
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
+      SALT: formation-neosoft-salt
+      ENCRYPTION_KEY: f5edb7a7a19a001d7df8f441acf0a209ce94dba4341601572fdf49304fcae2d7
+      NEXTAUTH_SECRET: formation-neosoft-secret
       NEXTAUTH_URL: http://localhost:3000
       TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: myredissecret
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment: *langfuse-env
 
   postgres:
-    image: pgvector/pgvector:pg16
-    profiles: ["observability"]
+    image: postgres:16
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: langfuse
+      POSTGRES_DB: postgres
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - langfuse_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
 
-  api:
-    image: python:3.11-slim
-    profiles: ["app"]
-    working_dir: /app
-    command: python -c "print('HelpDeskAI API is not implemented yet')"
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    environment:
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  redis:
+    image: redis:7
+    command: --requirepass myredissecret
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "myredissecret", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  minio:
+    image: minio/minio
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server /data --address ":9000" --console-address ":9001"'
+    ports:
+      - "9090:9000"
+      - "9091:9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    volumes:
+      - langfuse_minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  pgvector:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: helpdeskai
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+
+  demo:
+    <<: *helpdeskai-python
+    command: uv run --no-sync streamlit run scripts/demo_streamlit.py --server.address 0.0.0.0 --server.port 8501 --server.headless true --browser.gatherUsageStats false
+    ports:
+      - "8501:8501"
     volumes:
       - .:/app
+      - agent_checkpoints:/var/lib/helpdeskai
+    environment:
+      <<: *helpdeskai-env
+      HELPDESKAI_CHECKPOINT_DB: /var/lib/helpdeskai/agent_checkpoints.sqlite
+      HELPDESKAI_MCP_CRM_URL: http://mcp-crm:8000/sse
+      HELPDESKAI_MCP_KNOWLEDGE_URL: http://mcp-knowledge:8000/sse
     depends_on:
-      - qdrant
-      - mlflow
+      qdrant:
+        condition: service_started
+      mlflow:
+        condition: service_started
+      mcp-crm:
+        condition: service_started
+      mcp-knowledge:
+        condition: service_started
+
+  mcp-crm:
+    <<: *helpdeskai-python
+    command: uv run --no-sync python -m helpdeskai.mcp_servers.crm --transport sse
+    environment:
+      <<: *helpdeskai-env
+      HELPDESKAI_MCP_HOST: 0.0.0.0
+      HELPDESKAI_MCP_TOKEN: ${HELPDESKAI_MCP_TOKEN:-helpdeskai-dev-token}
+      HELPDESKAI_MCP_AUDIT_PATH: /app/data/audit/mcp-crm.jsonl
+
+  mcp-knowledge:
+    <<: *helpdeskai-python
+    command: uv run --no-sync python -m helpdeskai.mcp_servers.knowledge --transport sse
+    environment:
+      <<: *helpdeskai-env
+      HELPDESKAI_MCP_HOST: 0.0.0.0
+      HELPDESKAI_MCP_TOKEN: ${HELPDESKAI_MCP_TOKEN:-helpdeskai-dev-token}
+      HELPDESKAI_MCP_AUDIT_PATH: /app/data/audit/mcp-knowledge.jsonl
+    depends_on:
+      qdrant:
+        condition: service_started
+      pgvector:
+        condition: service_started
 
 volumes:
   qdrant_data:
   mlflow_data:
-  postgres_data:
-
+  pgvector_data:
+  langfuse_pg:
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+  langfuse_minio:
+  agent_checkpoints:

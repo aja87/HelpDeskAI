@@ -1,0 +1,22 @@
+flowchart TD
+    START([START]) --> classify_intent
+
+    classify_intent -->|ambiguous ou faible confiance| ask_clarification
+    classify_intent -->|chitchat ou out_of_scope| direct_answer
+    classify_intent -->|budget depasse| escalate_to_human
+    classify_intent -->|besoin outils| plan_mcp_calls
+
+    plan_mcp_calls -->|info manquante| ask_clarification
+    plan_mcp_calls -->|action sensible| request_human_approval
+    plan_mcp_calls -->|plan pret| execute_mcp_calls
+
+    request_human_approval --> execute_mcp_calls
+    execute_mcp_calls --> generate_answer
+    generate_answer --> quality_check
+
+    quality_check -->|fiable| END([END])
+    quality_check -->|non fiable| escalate_to_human
+
+    ask_clarification --> END
+    direct_answer --> END
+    escalate_to_human --> END

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, aja]
   pull_request:
 
 jobs:
@@ -19,4 +19,3 @@ jobs:
         run: uv run ruff check .
       - name: Test
         run: uv run pytest
-
