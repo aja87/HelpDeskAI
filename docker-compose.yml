@@ -2,6 +2,7 @@ x-helpdeskai-env: &helpdeskai-env
     PYTHONPATH: /app
     UV_PROJECT_ENVIRONMENT: /opt/venv
     HELPDESKAI_MCP_TOKEN: ${HELPDESKAI_MCP_TOKEN:-helpdeskai-dev-token}
+    HELPDESKAI_MCP_HOST: ${HELPDESKAI_MCP_HOST:-127.0.0.1}
     QDRANT_URL: http://qdrant:6333
     PGVECTOR_DSN: postgresql://postgres:postgres@pgvector:5432/helpdeskai
     MLFLOW_TRACKING_URI: http://mlflow:5000
@@ -170,6 +171,8 @@ services:
     environment:
       <<: *helpdeskai-env
       HELPDESKAI_CHECKPOINT_DB: /var/lib/helpdeskai/agent_checkpoints.sqlite
+      HELPDESKAI_MCP_CRM_URL: http://mcp-crm:8000/sse
+      HELPDESKAI_MCP_KNOWLEDGE_URL: http://mcp-knowledge:8000/sse
     depends_on:
       qdrant:
         condition: service_started
@@ -185,6 +188,7 @@ services:
     command: uv run --no-sync python -m helpdeskai.mcp_servers.crm --transport sse
     environment:
       <<: *helpdeskai-env
+      HELPDESKAI_MCP_HOST: 0.0.0.0
       HELPDESKAI_MCP_TOKEN: ${HELPDESKAI_MCP_TOKEN:-helpdeskai-dev-token}
       HELPDESKAI_MCP_AUDIT_PATH: /app/data/audit/mcp-crm.jsonl
 
@@ -193,6 +197,7 @@ services:
     command: uv run --no-sync python -m helpdeskai.mcp_servers.knowledge --transport sse
     environment:
       <<: *helpdeskai-env
+      HELPDESKAI_MCP_HOST: 0.0.0.0
       HELPDESKAI_MCP_TOKEN: ${HELPDESKAI_MCP_TOKEN:-helpdeskai-dev-token}
       HELPDESKAI_MCP_AUDIT_PATH: /app/data/audit/mcp-knowledge.jsonl
     depends_on:

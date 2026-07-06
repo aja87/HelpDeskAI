@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Callable
+from functools import lru_cache
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -30,7 +32,33 @@ def _default_search_backend(
     top_k: int,
     filters: SearchFilters | None,
 ) -> list[SearchResult]:
-    return search(query, top_k=top_k, filters=filters, mode=SearchMode.HYBRID)
+    filters = filters or SearchFilters()
+    return _cached_search(
+        query,
+        top_k,
+        filters.product,
+        filters.version,
+        filters.tenant,
+    )
+
+
+def _knowledge_mode() -> SearchMode:
+    try:
+        return SearchMode(os.environ.get("HELPDESKAI_MCP_KNOWLEDGE_MODE", SearchMode.HYBRID))
+    except ValueError:
+        return SearchMode.HYBRID
+
+
+@lru_cache(maxsize=128)
+def _cached_search(
+    query: str,
+    top_k: int,
+    product: str | None,
+    version: str | None,
+    tenant: str | None,
+) -> list[SearchResult]:
+    filters = SearchFilters(product=product, version=version, tenant=tenant)
+    return search(query, top_k=top_k, filters=filters, mode=_knowledge_mode())
 
 
 def search_knowledge_business(
@@ -97,7 +125,11 @@ def _search_knowledge_audited(
     )
 
 
-mcp = FastMCP("helpdeskai-knowledge")
+mcp = FastMCP(
+    "helpdeskai-knowledge",
+    host=os.environ.get("HELPDESKAI_MCP_HOST", "127.0.0.1"),
+    port=int(os.environ.get("HELPDESKAI_MCP_PORT", "8000")),
+)
 
 
 @mcp.tool()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import Any
 
@@ -14,7 +15,11 @@ from helpdeskai.mcp_servers.fake_crm import (
     list_recent_tickets_business,
 )
 
-mcp = FastMCP("helpdeskai-crm")
+mcp = FastMCP(
+    "helpdeskai-crm",
+    host=os.environ.get("HELPDESKAI_MCP_HOST", "127.0.0.1"),
+    port=int(os.environ.get("HELPDESKAI_MCP_PORT", "8000")),
+)
 
 
 @mcp.tool()

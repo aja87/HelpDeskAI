@@ -16,7 +16,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from helpdeskai.agents import AgentConfig, SupportAgent, open_sqlite_checkpointer  # noqa: E402
 from helpdeskai.agents.support_agent import IntentClassificationError  # noqa: E402
-from helpdeskai.mcp_servers.client import McpServerScripts, StdioMcpClient  # noqa: E402
+from helpdeskai.mcp_servers.client import (  # noqa: E402
+    McpServerScripts,
+    McpServerUrls,
+    StdioMcpClient,
+)
 from helpdeskai.rag.llm import MissingAnthropicKeyError  # noqa: E402
 
 DEFAULT_TOKEN = "helpdeskai-dev-token"
@@ -43,6 +47,14 @@ def _checkpoint_db_path() -> Path:
     return Path(os.environ.get("HELPDESKAI_CHECKPOINT_DB", DEFAULT_CHECKPOINT_DB))
 
 
+def _mcp_server_urls() -> McpServerUrls | None:
+    crm_url = os.environ.get("HELPDESKAI_MCP_CRM_URL")
+    knowledge_url = os.environ.get("HELPDESKAI_MCP_KNOWLEDGE_URL")
+    if crm_url and knowledge_url:
+        return McpServerUrls(crm=crm_url, knowledge=knowledge_url)
+    return None
+
+
 def _initial_state() -> dict[str, Any]:
     return {
         "messages": [],
@@ -62,6 +74,7 @@ def _build_agent(*, token: str) -> tuple[SupportAgent, Any]:
     checkpointer_context = open_sqlite_checkpointer(checkpoint_db)
     checkpointer = checkpointer_context.__enter__()
     mcp_client = StdioMcpClient(
+        urls=_mcp_server_urls(),
         scripts=McpServerScripts(
             crm=PROJECT_ROOT / "helpdeskai" / "mcp_servers" / "crm.py",
             knowledge=PROJECT_ROOT / "helpdeskai" / "mcp_servers" / "knowledge.py",

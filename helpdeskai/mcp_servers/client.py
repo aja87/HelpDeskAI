@@ -6,6 +6,7 @@ import asyncio
 import json
 import sys
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,14 @@ class McpServerScripts:
     knowledge: Path = Path("helpdeskai/mcp_servers/knowledge.py")
 
 
+@dataclass(frozen=True)
+class McpServerUrls:
+    """Remote MCP server URLs."""
+
+    crm: str
+    knowledge: str
+
+
 class StdioMcpClient:
     """Small synchronous facade over M08's MultiServerMCPClient."""
 
@@ -31,32 +40,60 @@ class StdioMcpClient:
         self,
         *,
         scripts: McpServerScripts | None = None,
+        urls: McpServerUrls | None = None,
         token: str = DEFAULT_TOKEN,
         actor_id: str = "agent_default",
     ) -> None:
         self.scripts = scripts or McpServerScripts()
+        self.urls = urls
         self.token = token
         self.actor_id = actor_id
 
     def _server_config(self) -> dict[str, dict[str, Any]]:
+        session_kwargs = {"read_timeout_seconds": timedelta(seconds=300)}
+        if self.urls is not None:
+            return {
+                "crm": {
+                    "url": self.urls.crm,
+                    "transport": "sse",
+                    "timeout": 30,
+                    "sse_read_timeout": 300,
+                    "session_kwargs": session_kwargs,
+                },
+                "knowledge": {
+                    "url": self.urls.knowledge,
+                    "transport": "sse",
+                    "timeout": 30,
+                    "sse_read_timeout": 300,
+                    "session_kwargs": session_kwargs,
+                },
+            }
         return {
             "crm": {
                 "command": sys.executable,
                 "args": [str(self.scripts.crm)],
                 "transport": "stdio",
+                "session_kwargs": session_kwargs,
             },
             "knowledge": {
                 "command": sys.executable,
                 "args": [str(self.scripts.knowledge)],
                 "transport": "stdio",
+                "session_kwargs": session_kwargs,
             },
         }
+
+    @staticmethod
+    def _server_for_tool(tool_name: str) -> str:
+        if tool_name == "search_knowledge":
+            return "knowledge"
+        return "crm"
 
     async def _call_async(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         from langchain_mcp_adapters.client import MultiServerMCPClient
 
         client = MultiServerMCPClient(self._server_config())
-        tools = await client.get_tools()
+        tools = await client.get_tools(server_name=self._server_for_tool(tool_name))
         by_name = {tool.name: tool for tool in tools}
         if tool_name not in by_name:
             raise McpClientError(f"MCP tool not found: {tool_name}")
