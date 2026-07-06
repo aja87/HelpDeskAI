@@ -13,6 +13,12 @@ from pathlib import Path
 
 from helpdeskai.corpus.chunking import Chunk
 
+STRATEGY_LABELS = {
+    "fixed": "Fixed-size chunking",
+    "recursive": "Recursive chunking",
+    "semantic": "Semantic chunking",
+}
+
 
 def deterministic_document_sample(
     documents: Sequence[dict],
@@ -86,8 +92,12 @@ def write_benchmark(path: Path, benchmark: dict) -> tuple[Path, Path]:
         lines.extend(["Semantic embedder: " + str(benchmark["semantic_embedder"]), ""])
     if benchmark.get("tokenizer"):
         lines.extend(["Tokenizer: " + str(benchmark["tokenizer"]), ""])
-    if benchmark.get("selected_strategy"):
-        lines.extend(["Selected strategy: " + str(benchmark["selected_strategy"]), ""])
+    selected_strategy = benchmark.get("selected_strategy", "recursive")
+    selected_label = STRATEGY_LABELS.get(
+        str(selected_strategy),
+        str(selected_strategy),
+    )
+    lines.extend(["Selected strategy: " + selected_label, ""])
     if benchmark.get("justification"):
         lines.extend(["Justification: " + str(benchmark["justification"]), ""])
 
