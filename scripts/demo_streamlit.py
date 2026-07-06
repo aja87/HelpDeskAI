@@ -19,8 +19,8 @@ from helpdeskai.agents.support_agent import IntentClassificationError  # noqa: E
 from helpdeskai.mcp_servers.client import McpServerScripts, StdioMcpClient  # noqa: E402
 from helpdeskai.rag.llm import MissingAnthropicKeyError  # noqa: E402
 
-CHECKPOINT_DB = PROJECT_ROOT / "data" / "agent_checkpoints.sqlite"
 DEFAULT_TOKEN = "helpdeskai-dev-token"
+DEFAULT_CHECKPOINT_DB = PROJECT_ROOT / "data" / "agent_checkpoints.sqlite"
 
 
 def _load_dotenv() -> None:
@@ -39,6 +39,10 @@ def _new_thread() -> str:
     return f"streamlit-{uuid.uuid4().hex[:10]}"
 
 
+def _checkpoint_db_path() -> Path:
+    return Path(os.environ.get("HELPDESKAI_CHECKPOINT_DB", DEFAULT_CHECKPOINT_DB))
+
+
 def _initial_state() -> dict[str, Any]:
     return {
         "messages": [],
@@ -53,8 +57,9 @@ def _reset_conversation() -> None:
 
 
 def _build_agent(*, token: str) -> tuple[SupportAgent, Any]:
-    CHECKPOINT_DB.parent.mkdir(parents=True, exist_ok=True)
-    checkpointer_context = open_sqlite_checkpointer(CHECKPOINT_DB)
+    checkpoint_db = _checkpoint_db_path()
+    checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
+    checkpointer_context = open_sqlite_checkpointer(checkpoint_db)
     checkpointer = checkpointer_context.__enter__()
     mcp_client = StdioMcpClient(
         scripts=McpServerScripts(
@@ -156,6 +161,31 @@ def _render_state_details(output: dict[str, Any] | None) -> None:
             st.json(output["pending_action"])
 
 
+def _render_approval_controls() -> None:
+    last_state = st.session_state.demo_state.get("last_state")
+    if not last_state:
+        return
+    if not last_state.get("pending_action") or last_state.get("action_result"):
+        return
+
+    st.warning("Action sensible en attente d'approbation humaine.")
+    cols = st.columns(2)
+    if cols[0].button("Approuver l'action", type="primary", use_container_width=True):
+        try:
+            output = _resume_agent("approved")
+            _append_assistant_state(output)
+            st.rerun()
+        except Exception as exc:  # pragma: no cover - Streamlit UI guard
+            st.error(f"Erreur pendant l'approbation: {exc}")
+    if cols[1].button("Rejeter l'action", use_container_width=True):
+        try:
+            output = _resume_agent("rejected")
+            _append_assistant_state(output)
+            st.rerun()
+        except Exception as exc:  # pragma: no cover - Streamlit UI guard
+            st.error(f"Erreur pendant le rejet: {exc}")
+
+
 def main() -> None:
     st.set_page_config(page_title="HelpDeskAI POC", page_icon="H", layout="wide")
     _load_dotenv()
@@ -170,24 +200,6 @@ def main() -> None:
     for message in st.session_state.demo_state["messages"]:
         with st.chat_message(message["role"]):
             st.write(message["content"])
-
-    last_state = st.session_state.demo_state.get("last_state")
-    if last_state and last_state.get("pending_action") and not last_state.get("action_result"):
-        cols = st.columns(2)
-        if cols[0].button("Approuver l'action", type="primary", use_container_width=True):
-            try:
-                output = _resume_agent("approved")
-                _append_assistant_state(output)
-                st.rerun()
-            except Exception as exc:  # pragma: no cover - Streamlit UI guard
-                st.error(f"Erreur pendant l'approbation: {exc}")
-        if cols[1].button("Rejeter l'action", use_container_width=True):
-            try:
-                output = _resume_agent("rejected")
-                _append_assistant_state(output)
-                st.rerun()
-            except Exception as exc:  # pragma: no cover - Streamlit UI guard
-                st.error(f"Erreur pendant le rejet: {exc}")
 
     question = st.chat_input("Posez une question support ou demandez une action CRM...")
     if question:
@@ -211,6 +223,7 @@ def main() -> None:
                 except Exception as exc:  # pragma: no cover - Streamlit UI guard
                     st.error(f"Erreur demo: {exc}")
 
+    _render_approval_controls()
     _render_state_details(st.session_state.demo_state.get("last_state"))
 
 

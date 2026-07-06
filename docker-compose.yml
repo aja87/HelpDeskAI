@@ -164,6 +164,12 @@ services:
     command: uv run --no-sync streamlit run scripts/demo_streamlit.py --server.address 0.0.0.0 --server.port 8501 --server.headless true --browser.gatherUsageStats false
     ports:
       - "8501:8501"
+    volumes:
+      - .:/app
+      - agent_checkpoints:/var/lib/helpdeskai
+    environment:
+      <<: *helpdeskai-env
+      HELPDESKAI_CHECKPOINT_DB: /var/lib/helpdeskai/agent_checkpoints.sqlite
     depends_on:
       qdrant:
         condition: service_started
@@ -203,3 +209,4 @@ volumes:
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:
   langfuse_minio:
+  agent_checkpoints:
