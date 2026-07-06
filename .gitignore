@@ -7,3 +7,5 @@ htmlcov/
 .ruff_cache/
 .venv/
 mlruns/
+.env
+**/.env
